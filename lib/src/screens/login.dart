@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import 'id_entry.dart';
 class LoginPage extends StatefulWidget {
   @override
   _LoginPageState createState() => _LoginPageState();
@@ -80,7 +80,10 @@ class _LoginPageState extends State<LoginPage> {
                   child: ElevatedButton(
                     onPressed: () {
                       // Logic for login goes here
-                      print("Username: ${_usernameController.text}");
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => IdEntryPage()),
+                      );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: skyBlue, // Sky Blue button
