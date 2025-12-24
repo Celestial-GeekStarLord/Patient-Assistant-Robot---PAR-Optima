@@ -1,16 +1,27 @@
 import 'package:flutter/material.dart';
-import 'report.dart';
+import 'package:provider/provider.dart';
+
+// 🛑 NEW IMPORTS
+import '../services/patient_data_service.dart'; // Handles Firebase Realtime Database
+import 'report.dart'; // Assuming report.dart is now report_screen.dart for consistency
+// Note: We don't import CommunicationService here because the Patient doesn't directly initiate the video call
 
 class PatientDashboard extends StatelessWidget {
   // Theme Colors
-  final Color skyBlue = Color(0xFF87CEEB);
-  final Color offWhite = Color(0xFFF0F4F8);
-  final Color emergencyRed = Color(0xFFFF5252);
-  final Color medOrange = Color(0xFFFFB74D);
-  final Color staffGreen = Color(0xFF4CAF50);
+  final Color skyBlue = const Color(0xFF87CEEB);
+  final Color offWhite = const Color(0xFFF0F4F8);
+  final Color emergencyRed = const Color(0xFFFF5252);
+  final Color medOrange = const Color(0xFFFFB74D);
+  final Color staffGreen = const Color(0xFF4CAF50);
+
+  // 🛑 Patient ID is used for Firebase path and logic
+  final String currentPatientID = "402";
 
   @override
   Widget build(BuildContext context) {
+    // 🛑 DATA ACCESS: Get real-time data from Firebase via the service
+    final patientData = Provider.of<PatientDataService>(context);
+
     return Scaffold(
       backgroundColor: offWhite,
       body: SafeArea(
@@ -28,12 +39,25 @@ class PatientDashboard extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-
-                        Text("Alex Johnson", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                        Text("Room 402", style: TextStyle(color: Colors.blueGrey, fontSize: 16)),
+                        // 🛑 DYNAMIC: Patient Name
+                        const Text(
+                          "Alex Johnson",
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        // 🛑 DYNAMIC: Room ID
+                        Text(
+                          "Room $currentPatientID",
+                          style: TextStyle(
+                            color: Colors.blueGrey,
+                            fontSize: 16,
+                          ),
+                        ),
                       ],
                     ),
-                    // Account Icon Button (Sizedbox + Elevated)
+                    // Account Icon Button
                     SizedBox(
                       width: 60,
                       height: 60,
@@ -42,10 +66,14 @@ class PatientDashboard extends StatelessWidget {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
                           padding: EdgeInsets.zero,
-                          shape: CircleBorder(),
+                          shape: const CircleBorder(),
                           elevation: 2,
                         ),
-                        child: Icon(Icons.person_rounded, color: skyBlue, size: 30),
+                        child: Icon(
+                          Icons.person_rounded,
+                          color: skyBlue,
+                          size: 30,
+                        ),
                       ),
                     ),
                   ],
@@ -60,19 +88,36 @@ class PatientDashboard extends StatelessWidget {
                   onPressed: () => print("Medication Details Clicked"),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: medOrange,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
                     elevation: 4,
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.medication_rounded, size: 40, color: Colors.white),
-                      SizedBox(width: 15),
+                      const Icon(
+                        Icons.medication_rounded,
+                        size: 40,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 15),
                       Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text("Next Medication", style: TextStyle(color: Colors.white, fontSize: 14)),
-                          Text("2:30 PM (In 45 mins)", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                          const Text(
+                            "Next Medication",
+                            style: TextStyle(color: Colors.white, fontSize: 14),
+                          ),
+                          // 🛑 DYNAMIC: Next Meds Time from Firebase
+                          Text(
+                            patientData.nextMedsTime,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -80,7 +125,7 @@ class PatientDashboard extends StatelessWidget {
                 ),
               ),
 
-              SizedBox(height: 30),
+              const SizedBox(height: 30),
 
               // --- 3. MAIN GRID (HEALTH INFO & CALL ROBOT) ---
               Expanded(
@@ -89,69 +134,79 @@ class PatientDashboard extends StatelessWidget {
                   crossAxisSpacing: 20,
                   mainAxisSpacing: 20,
                   children: [
-                    // HEALTH INFO BUTTON
+                    // HEALTH INFO BUTTON (View Medical History)
                     SizedBox(
                       child: ElevatedButton(
                         onPressed: () {
+                          // 🛑 ACTION: Navigate to the Medical Report/History screen
                           Navigator.push(
                             context,
-                            MaterialPageRoute(builder: (context) => ReportPage()),
+                            MaterialPageRoute(
+                              builder: (context) => ReportPage(),
+                            ),
                           );
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
                           elevation: 2,
                         ),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.analytics_rounded, size: 50, color: skyBlue),
-                            SizedBox(height: 10),
-                            Text("Health Info", style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+                            Icon(
+                              Icons.analytics_rounded,
+                              size: 50,
+                              color: skyBlue,
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              "Health Info",
+                              style: TextStyle(
+                                color: Colors.black87,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ],
                         ),
                       ),
                     ),
 
                     // CALL ROBOT BUTTON
-                    // CALL ROBOT BUTTON
                     SizedBox(
                       child: ElevatedButton(
                         onPressed: () {
-                          // 1. TRIGGER THE POP-UP
-                          showDialog(
-                            context: context,
-                            builder: (BuildContext context) {
-                              return AlertDialog(
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                title: Icon(Icons.smart_toy_rounded, size: 50, color: skyBlue),
-                                content: const Text(
-                                  "Robot is on the way!",
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(context), // Closes the pop-up
-                                    child: Text("OK", style: TextStyle(color: skyBlue, fontWeight: FontWeight.bold)),
-                                  ),
-                                ],
-                              );
-                            },
-                          );
+                          // 🛑 ACTION: Call Robot via Firebase (Sends command to the robot interface)
+                          patientData.requestRobot(currentPatientID);
+
+                          // Show the Pop-up confirmation
+                          _showConfirmation(context, "Robot is on the way!");
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
                           elevation: 2,
                         ),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.smart_toy_rounded, size: 50, color: Colors.indigoAccent),
+                            const Icon(
+                              Icons.smart_toy_rounded,
+                              size: 50,
+                              color: Colors.indigoAccent,
+                            ),
                             const SizedBox(height: 10),
-                            const Text("Call Robot", style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+                            const Text(
+                              "Call Robot",
+                              style: TextStyle(
+                                color: Colors.black87,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -166,25 +221,36 @@ class PatientDashboard extends StatelessWidget {
                 child: SizedBox(
                   width: double.infinity,
                   height: 80,
-
                   child: ElevatedButton(
-                    onPressed: () => _showConfirmation(context, "Staff Alerted"),
-
+                    onPressed: () {
+                      // 🛑 ACTION: Trigger Emergency via Firebase
+                      patientData.setEmergency(true);
+                      _showConfirmation(context, "Staff Alerted");
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: emergencyRed,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
                       elevation: 5,
                     ),
-                    child: Row(
+                    child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.warning_rounded, color: Colors.white, size: 30),
+                        Icon(
+                          Icons.warning_rounded,
+                          color: Colors.white,
+                          size: 30,
+                        ),
                         SizedBox(width: 10),
                         Text(
                           "EMERGENCY",
-                          style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-
                       ],
                     ),
                   ),
@@ -197,6 +263,7 @@ class PatientDashboard extends StatelessWidget {
     );
   }
 
+  // Helper method for confirmation dialogs
   void _showConfirmation(BuildContext context, String message) {
     showDialog(
       context: context,
@@ -205,11 +272,27 @@ class PatientDashboard extends StatelessWidget {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.check_circle_outline_rounded, color: staffGreen, size: 60),
-            SizedBox(height: 20),
-            Text(message, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            Icon(
+              Icons.check_circle_outline_rounded,
+              color: staffGreen,
+              size: 60,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              message,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context), // Closes the pop-up
+            child: Text(
+              "OK",
+              style: TextStyle(color: skyBlue, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
       ),
     );
   }

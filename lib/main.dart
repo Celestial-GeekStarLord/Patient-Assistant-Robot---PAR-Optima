@@ -78,7 +78,7 @@ class ParOptimaApp extends StatelessWidget {
         // Ensure fonts/theming are consistent across the app
       ),
       // Use the login status to determine the initial screen
-      home: isLoggedIn ? const PatientInterface() : LoginPage(),
+      home: isLoggedIn ? PatientDashboard() : LoginPage(),
     );
   }
 }
