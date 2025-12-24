@@ -6,6 +6,9 @@ class PatientDashboard extends StatelessWidget {
   final Color emergencyRed = Color(0xFFFF5252);
   final Color medOrange = Color(0xFFFFB74D);
 
+
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
