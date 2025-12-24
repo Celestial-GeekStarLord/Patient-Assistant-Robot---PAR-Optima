@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'mode_selector.dart';
+import '../src/screens/login.dart'; // Import your file
 
 void main() {
-  runApp(const MaterialApp(
+  runApp(MaterialApp(
     debugShowCheckedModeBanner: false,
-    home: ModeSelector(),
+    home: LoginPage(), // This tells the app to start on the Login Page
   ));
 }
