@@ -183,7 +183,7 @@ class StaffInterface extends StatelessWidget {
                 context,
                 MaterialPageRoute(
                   builder: (context) => const VideoCallScreen(
-                    channelName: "Room402_Doctor",
+                    channelName: "room_402",
                     isHost: true, // Indicates this side is the staff/admin
                   ),
                 ),

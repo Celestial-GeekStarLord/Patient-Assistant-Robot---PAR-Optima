@@ -4,10 +4,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 
 // 🛑 Local Imports - Ensure these paths are correct in your project
-import 'src/screens/login.dart'; // Assuming LoginPage is login_screen.dart
-import 'src/screens/patient_interface.dart'; // PatientDashboard
-import 'src/screens/robot_interface.dart'; // For Robot access (if needed)
-import 'src/screens/staff_interface.dart'; // We should include staff/main interface
+import 'src/screens/login.dart';
+import 'src/screens/patient_interface.dart';
+import 'src/screens/robot_interface.dart';
+import 'src/screens/staff_interface.dart';
 import 'src/services/communication_service.dart';
 import 'src/services/patient_data_service.dart';
 import 'firebase_options.dart';
@@ -29,10 +29,8 @@ Future<void> main() async {
   }
 
   // 2. AGORA ENGINE INITIALIZATION
-  // Initialize the service instance here to call the async setup method
   final commService = CommunicationService();
   try {
-    // 🛑 FIX: Use the correct method name from our CommunicationService implementation
     await commService.initAgora();
     debugPrint("Agora Engine Initialized.");
   } catch (e) {
@@ -43,7 +41,7 @@ Future<void> main() async {
 
   // 3. AUTO-LOGIN CHECK
   bool isLoggedIn = false;
-  String userType = 'unknown'; // Track user type for screen routing
+  String userType = 'unknown';
   try {
     final prefs = await SharedPreferences.getInstance();
     isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
@@ -60,13 +58,13 @@ Future<void> main() async {
         ChangeNotifierProvider<PatientDataService>(
           create: (_) => PatientDataService(),
         ),
-        // Provides the configured Agora service for video calls
-        // Use .value since the instance was created and initialized above
-        Provider<CommunicationService>.value(value: commService),
+        // 🛑 FIX APPLIED: Changed to ChangeNotifierProvider.value to handle
+        // the CommunicationService's notifyListeners() calls correctly.
+        ChangeNotifierProvider<CommunicationService>.value(value: commService),
       ],
       child: ParOptimaApp(
         isLoggedIn: isLoggedIn,
-        userType: userType, // Pass user type for routing
+        userType: userType,
       ),
     ),
   );
@@ -86,21 +84,21 @@ class ParOptimaApp extends StatelessWidget {
   Widget _getInitialScreen() {
     if (!isLoggedIn) {
       // 🛑 Initial state: User must log in
-      return const LoginPage();
+      return StaffInterface();
     }
 
     // 🛑 If logged in, route based on user type
     switch (userType) {
       case 'patient':
-        // Assuming PatientInterface holds the PatientDashboard widget
+      // 🛑 FIX APPLIED: Removed 'const' keyword here as PatientDashboard is non-const.
         return PatientDashboard();
       case 'staff':
         return const StaffInterface();
       case 'robot':
-        return const RobotInterface();
+        return RobotInterface();
       default:
-        // Fallback or re-login if type is unknown
-        return const LoginPage();
+      // Fallback or re-login if type is unknown
+        return LoginPage();
     }
   }
 
@@ -110,37 +108,18 @@ class ParOptimaApp extends StatelessWidget {
       title: 'PAR Optima Prototype',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch:
-            Colors.indigo, // Changed to a specific color for consistency
+        primarySwatch: Colors.indigo,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: _getInitialScreen(), // Use the routing logic
+      home: _getInitialScreen(),
     );
   }
 }
 
-// 🛑 Assuming these placeholder classes exist in the imported files:
-// They are needed for the routing logic.
-class LoginPage extends StatelessWidget {
-  const LoginPage({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: Text("Login Screen Placeholder")));
-}
-
-class StaffInterface extends StatelessWidget {
-  const StaffInterface({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: Text("Staff Interface Placeholder")));
-}
-
-class RobotInterface extends StatelessWidget {
-  const RobotInterface({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: Text("Robot Interface Placeholder")));
-}
+// 🛑 IMPORTANT: These placeholder classes should be REMOVED from main.dart
+// once you create the actual files they import from (e.g., login.dart).
+// I will remove them here, assuming your actual imports (like 'src/screens/login.dart')
+// define them correctly.
 
 // void main() {
 //   runApp(MaterialApp(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'video_call_screen.dart';
 
 class RobotInterface extends StatelessWidget {
   // Premium Color Palette
@@ -43,7 +44,23 @@ class RobotInterface extends StatelessWidget {
                     icon: Icons.person_add_alt_1_rounded,
                     topColor: Color(0xFF66BB6A),
                     bottomColor: Color(0xFF43A047),
-                    onTap: () => _showConfirmation(context, "Staff Alerted"),
+                    onTap: (){
+                      // Define the channel the robot should join
+                      const String robotChannel = 'room_402'; // Use the correct channel for this robot/patient
+
+                      // Navigate to the VideoCallScreen, providing all required parameters
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const VideoCallScreen(
+                            // 🛑 FIX: Provide the required channelName
+                            channelName: robotChannel,
+                            // 🛑 FIX: Provide the required isHost status (Robot is NOT the host/staff)
+                            isHost: false,
+                          ),
+                        ),
+                      );
+                    },
                   ),
 
                   SizedBox(height: 20),
