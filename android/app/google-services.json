@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1003014358536",
+    "project_id": "par-optima",
+    "storage_bucket": "par-optima.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1003014358536:android:b06e87f092ca5f3f70b3bd",
+        "android_client_info": {
+          "package_name": "com.example.par_optima"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyArzxPSPUNb6kuct9dnFPPnGJ0zD2VVvKI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
