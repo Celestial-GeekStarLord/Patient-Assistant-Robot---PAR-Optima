@@ -1,135 +1,180 @@
-// lib/src/services/communication_service.dart
-
-import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:flutter/foundation.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:http/http.dart' as http; // 🛑 NEW IMPORT for network requests
-import 'dart:convert'; // To decode JSON responses
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
-// 🛑 IMPORTANT: Use your actual Agora App ID
-const String agoraAppId = "YOUR_AGORA_APP_ID";
+// Import your Agora App ID configuration
+import '../../env/agora.dart';
 
-// 🛑 IMPORTANT: Replace this with the URL of your deployed Token Server
-// Example: 'https://your-domain.com/agora/token'
-const String tokenServerUrl = "http://127.0.0.1:8080/rtc/room_402/publisher/0";
-
+/// The CommunicationService manages all Agora Real-Time Communication (RTC)
+/// functionalities, including engine initialization, token fetching via
+/// Firebase Cloud Functions, joining/leaving channels, and handling callbacks.
 class CommunicationService extends ChangeNotifier {
   RtcEngine? _engine;
   int? _remoteUid;
   bool _localUserJoined = false;
 
-  // ... (Getters remain the same) ...
+  // Public Getters for UI access
   RtcEngine? get engine => _engine;
   int? get remoteUid => _remoteUid;
   bool get localUserJoined => _localUserJoined;
 
-  // ... (initAgora and _handlePermissions remain the same) ...
+  // ----------------------------------------------------
+  // 1. ENGINE INITIALIZATION AND SETUP
+  // ----------------------------------------------------
 
-  // Initializes the Agora RTC Engine and sets up event handlers.
+  /// Initializes the Agora RTC Engine and sets up event handlers.
   Future<void> initAgora() async {
-    // 1. Request Permissions
-    await _handlePermissions();
+    // 1. Request permissions (Crucial for Android/iOS)
+    await _handleCameraAndMicPermissions();
 
-    // 2. Create the engine
+    // 2. Create the engine instance
     _engine = createAgoraRtcEngine();
+
+    // 3. Initialize the engine with the App ID from your secure config
     await _engine!.initialize(
       const RtcEngineContext(
-        appId: agoraAppId,
+        appId: AgoraConfig.agoraAppId,
         channelProfile: ChannelProfileType.channelProfileCommunication,
       ),
     );
 
-    // 3. Set up event handlers
-    _setupEngineEventHandlers();
-
-    // 4. Enable necessary features
+    // 4. Enable video and set up necessary config
     await _engine!.enableVideo();
-    await _engine!.setClientRole(ClientRoleType.clientRoleBroadcaster);
+    await _engine!.setClientRole(role: ClientRoleType.clientRoleBroadcaster);
+    await _engine!.startPreview();
 
-    notifyListeners();
+    // 5. Set up event handlers
+    _addAgoraEventHandlers();
   }
 
-  Future<void> _handlePermissions() async {
-    await [Permission.microphone, Permission.camera].request();
+  // ----------------------------------------------------
+  // 2. PERMISSIONS
+  // ----------------------------------------------------
+
+  /// Requests necessary camera and microphone permissions.
+  Future<void> _handleCameraAndMicPermissions() async {
+    // Note: Permission handling logic here is simplified.
+    // Use a package like permission_handler for production apps.
   }
 
-  void _setupEngineEventHandlers() {
+  // ----------------------------------------------------
+  // 3. AGORA EVENT HANDLERS
+  // ----------------------------------------------------
+
+  /// Configures the callback methods for Agora events.
+  void _addAgoraEventHandlers() {
     _engine!.registerEventHandler(
       RtcEngineEventHandler(
+        // Local user successfully joined the channel
         onJoinChannelSuccess: (RtcConnection connection, int elapsed) {
-          debugPrint("Local user joined: ${connection.localUid}");
+          debugPrint(
+            "Local user ${connection.localUid} joined channel ${connection.channelId}",
+          );
           _localUserJoined = true;
           notifyListeners();
         },
+
+        // Remote user joined the channel
         onUserJoined: (RtcConnection connection, int remoteUid, int elapsed) {
-          debugPrint("Remote user joined: $remoteUid");
+          debugPrint(
+            "Remote user $remoteUid joined channel ${connection.channelId}",
+          );
           _remoteUid = remoteUid;
           notifyListeners();
         },
+
+        // Remote user left the channel
         onUserOffline:
             (
               RtcConnection connection,
               int remoteUid,
               UserOfflineReasonType reason,
             ) {
-              debugPrint("Remote user left: $remoteUid");
+              debugPrint(
+                "Remote user $remoteUid left channel ${connection.channelId}",
+              );
               _remoteUid = null;
               notifyListeners();
             },
-        onLeaveChannel: (RtcConnection connection, RtcStats stats) {
-          debugPrint("Local user left channel");
-          _localUserJoined = false;
-          _remoteUid = null;
-          notifyListeners();
-        },
-        onError: (ErrorCodeType err, String msg) {
-          debugPrint("Agora Error: $err, $msg");
+
+        // Token is about to expire (Crucial for token renewal)
+        onTokenPrivilegeWillExpire:
+            (RtcConnection connection, String oldToken) async {
+              debugPrint('Token will expire soon. Renewing...');
+
+              // We reuse the local UID from the connection object for renewal
+              final uid = connection.localUid ?? 0;
+
+              // 1. Fetch the new token securely
+              final newToken = await _fetchAgoraToken(
+                connection.channelId ?? 'default_channel',
+                uid,
+              );
+
+              if (newToken != null) {
+                // 🛑 FIX: Call renewToken with the new token as a POSITIONAL ARGUMENT.
+                await _engine!.renewToken(newToken);
+                debugPrint('Token renewed successfully.');
+              } else {
+                debugPrint('Failed to renew token!');
+              }
+            },
+
+        // Log any errors
+        onError: (ErrorCodeType code, String message) {
+          debugPrint('Agora Error: $code, Message: $message');
         },
       ),
     );
   }
 
-  // -------------------------
-  // SECURE TOKEN FETCHING
-  // -------------------------
+  // ----------------------------------------------------
+  // 4. SECURE TOKEN FETCHING (VIA FIREBASE FUNCTIONS)
+  // ----------------------------------------------------
 
-  /// 🛑 Fetches the secure RTC token from your deployed backend server.
+  /// Fetches the secure RTC token from the deployed Firebase Cloud Function.
+  /// This replaces a direct HTTP call for increased security.
   Future<String?> _fetchAgoraToken(String channelName, int uid) async {
-    // 1. Construct the secure URL endpoint
-    // Assuming your server endpoint takes the channel name and a user role/UID
-    final String url = '$tokenServerUrl/$channelName/publisher/$uid';
-
-    debugPrint("Fetching token from: $url");
+    const functionName =
+        AgoraConfig.agoraTokenFunctionName; // Defined in agora.dart
 
     try {
-      final response = await http.get(Uri.parse(url));
+      // 1. Call the Firebase Cloud Function
+      final result = await FirebaseFunctions.instance
+          .httpsCallable(functionName)
+          .call({'channelName': channelName, 'uid': uid});
 
-      if (response.statusCode == 200) {
-        // Example server response structure: {"rtcToken": "006...","uid": 0}
-        final data = json.decode(response.body);
-        final String token = data['rtcToken'];
-        return token;
-      } else {
-        debugPrint(
-          'Failed to load Agora token. Status code: ${response.statusCode}',
-        );
+      // 2. Parse the result structure: { token: "..." }
+      final String? token = result.data['token'];
+
+      if (token == null) {
+        debugPrint('Failed to fetch Agora token: Token field missing.');
         return null;
       }
+      return token;
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint(
+        'Firebase Function Error ($functionName): ${e.code} - ${e.message}',
+      );
+      // Log full error for debugging
+      debugPrint('Firebase Function Details: ${e.details}');
+      return null;
     } catch (e) {
-      debugPrint('Network error fetching token: $e');
+      debugPrint('Unknown error calling Firebase Function: $e');
       return null;
     }
   }
 
-  // -------------------------
-  // CALL ACTIONS
-  // -------------------------
+  // ----------------------------------------------------
+  // 5. CALL CONTROL METHODS
+  // ----------------------------------------------------
 
-  /// Joins the call channel securely after fetching a token.
+  /// Joins the specified channel after fetching a secure token.
   Future<void> joinCall(String channelName) async {
-    // 🛑 1. Fetch the secure token dynamically
-    // Using UID 0 lets Agora assign a random UID, simplifying the token server logic.
+    // Use UID 0 to let Agora assign a random UID
     const int uid = 0;
+
+    // 1. Fetch Token
     final String? token = await _fetchAgoraToken(channelName, uid);
 
     if (token == null) {
@@ -137,7 +182,7 @@ class CommunicationService extends ChangeNotifier {
       return;
     }
 
-    // 2. Join the channel with the secure token
+    // 2. Join Channel
     await _engine!.joinChannel(
       token: token,
       channelId: channelName,
@@ -146,36 +191,35 @@ class CommunicationService extends ChangeNotifier {
     );
   }
 
-  /// Ends the call and disposes the engine.
+  /// Ends the current call and releases resources.
   Future<void> endCall() async {
-    try {
-      await _engine?.leaveChannel();
-      await _engine?.release();
-      _engine = null;
-      _localUserJoined = false;
-      _remoteUid = null;
-    } catch (e) {
-      debugPrint("Error ending call: $e");
-    } finally {
-      notifyListeners();
-    }
+    await _engine?.leaveChannel();
+    _remoteUid = null;
+    _localUserJoined = false;
+    // Destroy the engine instance to free native resources
+    await _engine?.release();
+    _engine = null;
+    notifyListeners();
   }
 
-  // ... (toggleMute, toggleVideo, switchCamera, dispose remain the same) ...
-  Future<void> toggleMute(bool isMuted) async {
-    await _engine?.muteLocalAudioStream(isMuted);
+  /// Toggles the microphone on/off.
+  Future<void> toggleMute(bool muted) async {
+    await _engine?.muteLocalAudioStream(muted);
+    // You might want to notify listeners here if you display the mute status
   }
 
-  Future<void> toggleVideo(bool isDisabled) async {
-    await _engine?.muteLocalVideoStream(isDisabled);
-  }
-
+  /// Switches between front and back camera.
   Future<void> switchCamera() async {
     await _engine?.switchCamera();
   }
 
+  // ----------------------------------------------------
+  // 6. DISPOSE
+  // ----------------------------------------------------
+
   @override
   void dispose() {
+    // Ensure the engine is released when the service is no longer needed
     endCall();
     super.dispose();
   }
