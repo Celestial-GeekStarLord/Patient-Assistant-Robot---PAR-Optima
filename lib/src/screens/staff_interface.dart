@@ -214,8 +214,8 @@ class StaffInterface extends StatelessWidget {
               backgroundColor: Colors.purple,
               minimumSize: const Size.fromHeight(100),
             ),
-            onPressed:
-                patientData.sendRobotToRoom, // Publishes command to Firebase
+             onPressed: () => print('YES')
+               // patientData.sendRobotToRoom, // Publishes command to Firebase
           ),
         ),
 
