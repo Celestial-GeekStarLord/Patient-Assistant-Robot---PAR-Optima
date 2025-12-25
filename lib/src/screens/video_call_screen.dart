@@ -2,13 +2,15 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:agora_rtc_engine/agora_rtc_engine.dart'; // 🛑 Correct import for video views
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import '../services/communication_service.dart';
 import '../services/patient_data_service.dart';
+import '../providers/user_provider.dart';
+import '../services/firebase_call_service.dart';
 
 class VideoCallScreen extends StatefulWidget {
   final String channelName;
-  final bool isHost; // True for Staff, false for Patient/Robot
+  final bool isHost;
 
   const VideoCallScreen({
     super.key,
@@ -22,64 +24,84 @@ class VideoCallScreen extends StatefulWidget {
 
 class _VideoCallScreenState extends State<VideoCallScreen> {
   bool isMuted = false;
-  bool isVideoDisabled = false;
+  // Note: isVideoDisabled state management is missing the actual Agora toggle logic
 
   @override
   void initState() {
     super.initState();
-    _initializeCall();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeCall();
+    });
   }
 
   void _initializeCall() async {
-    final commService = Provider.of<CommunicationService>(
-      context,
-      listen: false,
-    );
-    final patientService = Provider.of<PatientDataService>(
-      context,
-      listen: false,
-    );
+    // Access providers using listen: false since we are in initState's callback
+    final commService = Provider.of<CommunicationService>(context, listen: false);
+    final patientService = Provider.of<PatientDataService>(context, listen: false);
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+
+    // Get the user's custom ID and generate a unique integer UID
+    final String userIdString = userProvider.userCustomId ?? 'unknown_user';
+    final int userUid = userIdString.hashCode;
+
+    debugPrint('Joining channel: ${widget.channelName} with UID: $userUid');
 
     // 1. Join the Agora Channel
-    await commService.joinCall(widget.channelName);
+    // We assume the engine is already initialized in main.dart
+    await commService.joinCall(
+      channelName: widget.channelName,
+      userUid: userUid,
+    );
 
-    // 2. Update Firebase Signaling Status
-    // Note: The channelName in this example is static ("room_402"),
-    // but in a multi-room app, you would pass a dynamic ID to setCallStatus
+    // 2. Update Firebase Signaling Status (Legacy/Tracking)
+    // NOTE: This should ideally be moved to a single CallStatus service.
     if (!widget.isHost) {
-      // If Patient or Robot initiates the call, set status to 'Calling'
       patientService.setCallStatus('Patient Calling Staff');
     } else {
-      // If Staff initiated the call, they are just joining
       patientService.setCallStatus('In Call');
     }
   }
 
   void _onCallEnd(BuildContext context) async {
-    final commService = Provider.of<CommunicationService>(
-      context,
-      listen: false,
-    );
-    final patientService = Provider.of<PatientDataService>(
-      context,
-      listen: false,
-    );
+    // Access providers using listen: false
+    final commService = Provider.of<CommunicationService>(context, listen: false);
+    final firebaseCallService = Provider.of<FirebaseCallService>(context, listen: false);
+    final patientService = Provider.of<PatientDataService>(context, listen: false);
 
-    // 1. Reset Firebase Call Status
+    // 1. Clear the Firebase RTDB Signaling Node
+    await firebaseCallService.declineCall(); // Clears the /calls node
+
+    // 2. Reset the legacy PatientDataService status
     await patientService.setCallStatus('Idle');
 
-    // 2. End the Agora Call and release resources
+    // 3. End the Agora Call and release resources
     await commService.endCall();
 
-    // 3. Navigate back
+    // 4. Navigate back
     Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    final commService = Provider.of<CommunicationService>(context);
+    // Watch CommunicationService for real-time updates (especially remoteUid and engine status)
+    final commService = context.watch<CommunicationService>();
 
-    //
+    // Safety check for engine initialization
+    if (commService.engine == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Video Call Error')),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(30.0),
+            child: Text(
+              '🔴 FATAL ERROR: Video Engine not initialized. Please check CommunicationService setup.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.red, fontSize: 18),
+            ),
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -125,13 +147,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   // Renders the remote user's video feed
   Widget _remoteVideo(CommunicationService commService) {
-    // Show a fallback widget if the engine hasn't been initialized yet
-    if (commService.engine == null)
-      return const Center(
-        child: Text('Initializing...', style: TextStyle(color: Colors.white)),
-      );
-
-    if (commService.remoteUid != null) {
+    // 🛑 CRITICAL CHECK: Ensure remoteUid is set by the CommunicationService's onUserJoined handler
+    if (commService.remoteUid != null && commService.engine != null) {
       return AgoraVideoView(
         controller: VideoViewController.remote(
           rtcEngine: commService.engine!,
@@ -144,7 +161,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         color: Colors.black,
         child: const Center(
           child: Text(
-            'Waiting for the other party...',
+            'Waiting for Robot/Patient video...',
             style: TextStyle(color: Colors.white, fontSize: 18),
           ),
         ),
@@ -154,7 +171,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   // Renders the local user's video feed
   Widget _localVideo(CommunicationService commService) {
-    // Show a fallback widget if the engine hasn't been initialized yet
+    // Check if the engine is ready AND the local user has successfully joined.
     if (commService.engine == null || !commService.localUserJoined) {
       return Container(
         color: Colors.grey[800],
@@ -164,7 +181,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       );
     }
 
-    // Use uid = 0 for the local stream
+    // Render the local video (using UID 0 is standard for the local stream)
     return AgoraVideoView(
       controller: VideoViewController(
         rtcEngine: commService.engine!,
@@ -188,9 +205,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             // Mute Button
             RawMaterialButton(
               onPressed: () {
-                isMuted = !isMuted;
-                commService.toggleMute(isMuted);
-                setState(() {});
+                setState(() {
+                  isMuted = !isMuted;
+                });
+                if (commService.engine != null) commService.toggleMute(isMuted);
               },
               shape: const CircleBorder(),
               elevation: 2.0,
@@ -219,7 +237,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
             // Camera Switch Button
             RawMaterialButton(
-              onPressed: () => commService.switchCamera(),
+              onPressed: () {
+                if (commService.engine != null) commService.switchCamera();
+              },
               shape: const CircleBorder(),
               elevation: 2.0,
               fillColor: Colors.white,

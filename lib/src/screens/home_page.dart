@@ -7,7 +7,7 @@ import 'login.dart';
 import 'patient_interface.dart';
 import 'staff_interface.dart';
 import 'robot_interface.dart';
-import 'call_listener_wrapper.dart'; // 🛑 NEW: Import the wrapper
+// 🛑 REMOVED: import 'call_listener_wrapper.dart'; // No longer needed
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -34,11 +34,13 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadProfileAndNavigate() async {
     // 1. Load the user's profile from Firestore
+    // Call loadUserProfile only if the profile hasn't been loaded yet
     if (!_userProvider.isProfileLoaded) {
       await _userProvider.loadUserProfile();
     }
 
     // 2. Perform the routing
+    // Pass the instance that now has the loaded profile data
     _routeToDashboard(_userProvider);
   }
 
@@ -48,29 +50,27 @@ class _HomePageState extends State<HomePage> {
 
     // Default to LoginPage if the role cannot be determined
     Widget destination = const LoginPage();
-    String? role = provider.userRole; // Get the role from the passed provider
-    String? customId = provider.userCustomId; // 🛑 NEW: Get the custom ID for the wrapper
+    String? role = provider.userRole;
+    String? customId = provider.userCustomId; // Retain customId check for safety
 
     if (role != null) {
       // Determine the destination based on the user's role
       switch (role) {
         case 'patient':
-        // Assuming PatientDashboard doesn't need the provider passed
-          destination = PatientDashboard();
+        // PatientDashboard starts its own listeners internally
+          destination = const PatientDashboard();
           break;
+
         case 'staff':
+        // StaffInterface starts its call listener in its own initState
           destination = const StaffInterface();
           break;
 
-      // 🛑 FIX APPLIED: Wrap RobotInterface in the CallListenerWrapper 🛑
         case 'robot':
+        // RobotInterface starts its own listeners internally (if any)
           if (customId != null) {
-            // Wrap the Robot Interface so it can automatically navigate to the call screen
-            // once the Agora token is successfully fetched.
-            destination = CallListenerWrapper(
-              localUserId: customId,
-              child: RobotInterface(patientUser: provider),
-            );
+            // 🛑 CRITICAL FIX APPLIED HERE: Direct navigation, remove CallListenerWrapper
+            destination = const RobotInterface();
           } else {
             // Handle case where customId is unexpectedly null
             debugPrint("Error: Robot Custom ID is null.");

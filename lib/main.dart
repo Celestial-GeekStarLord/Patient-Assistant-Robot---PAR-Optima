@@ -3,18 +3,30 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 
-// 🛑 Local Imports - Ensure these paths are correct in your project
-import 'src/screens/login.dart'; // Assuming LoginPage is login_screen.dart
-import 'src/screens/patient_interface.dart'; // PatientDashboard
-import 'src/screens/robot_interface.dart'; // For Robot access (if needed)
-import 'src/screens/staff_interface.dart'; // We should include staff/main interface
+// 🛑 SCREEN IMPORTS
+import 'src/screens/login.dart';
+import 'src/screens/patient_interface.dart';
+import 'src/screens/staff_interface.dart';
+import 'src/screens/robot_interface.dart';
+
+// SERVICE & UTILITY IMPORTS
+import 'src/providers/user_provider.dart';
+import 'src/services/auth_service.dart';
 import 'src/services/communication_service.dart';
 import 'src/services/patient_data_service.dart';
+
+// 🛑 NEW IMPORT: The service handling Firebase signaling
+import 'src/services/firebase_call_service.dart';
+// Note: We still import call_service.dart if other files depend on the abstract type,
+// but we no longer need the explicit import here if we use the concrete class below.
+// import 'src/services/call_service.dart';
+
 import 'firebase_options.dart';
 
 Future<void> main() async {
-  // Always call this first when using plugins
   WidgetsFlutterBinding.ensureInitialized();
+
+  // --- INITIALIZATION ---
 
   // 1. FIREBASE INITIALIZATION
   try {
@@ -28,11 +40,14 @@ Future<void> main() async {
     );
   }
 
-  // 2. AGORA ENGINE INITIALIZATION
-  // Initialize the service instance here to call the async setup method
-  final commService = CommunicationService();
+  // 2. DEPENDENCY INJECTION / SERVICE INSTANCES
+  final AuthService authService = AuthService();
+  final CommunicationService commService = CommunicationService();
+  // 🛑 NEW: Instance of the Firebase Signaling Service
+  final FirebaseCallService firebaseCallService = FirebaseCallService();
+
+  // 3. AGORA ENGINE INITIALIZATION
   try {
-    // 🛑 FIX: Use the correct method name from our CommunicationService implementation
     await commService.initAgora();
     debugPrint("Agora Engine Initialized.");
   } catch (e) {
@@ -41,9 +56,9 @@ Future<void> main() async {
     );
   }
 
-  // 3. AUTO-LOGIN CHECK
+  // 4. AUTO-LOGIN CHECK
   bool isLoggedIn = false;
-  String userType = 'unknown'; // Track user type for screen routing
+  String userType = 'unknown';
   try {
     final prefs = await SharedPreferences.getInstance();
     isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
@@ -52,25 +67,52 @@ Future<void> main() async {
     debugPrint('Error accessing SharedPreferences for login check: $e');
   }
 
-  // 4. LAUNCH APPLICATION
+  // 5. LAUNCH APPLICATION
   runApp(
     MultiProvider(
       providers: [
-        // Provides real-time data from Firebase to the UI
-        ChangeNotifierProvider<PatientDataService>(
-          create: (_) => PatientDataService(),
+        // 1. Expose AuthService
+        Provider<AuthService>.value(value: authService),
+
+        // 2. UserProvider
+        ChangeNotifierProvider<UserProvider>(
+          create: (_) => UserProvider(authService),
         ),
-        // Provides the configured Agora service for video calls
-        // Use .value since the instance was created and initialized above
-        Provider<CommunicationService>.value(value: commService),
+
+        // 🛑 NEW: FirebaseCallService (Signaling)
+        ChangeNotifierProvider<FirebaseCallService>.value(value: firebaseCallService),
+
+        // 3. CommunicationService (Agora Engine)
+        ChangeNotifierProvider<CommunicationService>.value(value: commService),
+
+        // 🛑 REMOVED: The old, incorrect binding is removed. The above two services are used directly.
+        // ChangeNotifierProvider<CallService>.value(value: commService),
+
+        // 4. PatientDataService
+        ChangeNotifierProxyProvider<UserProvider, PatientDataService>(
+          update: (context, userProvider, previousService) {
+            final channelPath = 'patients/${userProvider.userCustomId}';
+
+            if (userProvider.userCustomId != null) {
+              if (previousService != null && previousService.channelId == channelPath) {
+                return previousService;
+              }
+              return PatientDataService(channelId: channelPath);
+            }
+            return PatientDataService(channelId: 'patients/placeholder');
+          },
+          create: (_) => PatientDataService(channelId: 'patients/initial'),
+        ),
       ],
       child: ParOptimaApp(
         isLoggedIn: isLoggedIn,
-        userType: userType, // Pass user type for routing
+        userType: userType,
       ),
     ),
   );
 }
+
+// --- APP WIDGETS ---
 
 class ParOptimaApp extends StatelessWidget {
   final bool isLoggedIn;
@@ -85,21 +127,17 @@ class ParOptimaApp extends StatelessWidget {
   // Determines the screen to show based on login status and user type
   Widget _getInitialScreen() {
     if (!isLoggedIn) {
-      // 🛑 Initial state: User must log in
       return const LoginPage();
     }
 
-    // 🛑 If logged in, route based on user type
     switch (userType) {
       case 'patient':
-        // Assuming PatientInterface holds the PatientDashboard widget
-        return PatientDashboard();
+        return const PatientDashboard();
       case 'staff':
         return const StaffInterface();
       case 'robot':
         return const RobotInterface();
       default:
-        // Fallback or re-login if type is unknown
         return const LoginPage();
     }
   }
@@ -110,42 +148,10 @@ class ParOptimaApp extends StatelessWidget {
       title: 'PAR Optima Prototype',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch:
-            Colors.indigo, // Changed to a specific color for consistency
+        primarySwatch: Colors.indigo,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: _getInitialScreen(), // Use the routing logic
+      home: _getInitialScreen(),
     );
   }
 }
-
-// 🛑 Assuming these placeholder classes exist in the imported files:
-// They are needed for the routing logic.
-class LoginPage extends StatelessWidget {
-  const LoginPage({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: Text("Login Screen Placeholder")));
-}
-
-class StaffInterface extends StatelessWidget {
-  const StaffInterface({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: Text("Staff Interface Placeholder")));
-}
-
-class RobotInterface extends StatelessWidget {
-  const RobotInterface({super.key});
-  @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: Text("Robot Interface Placeholder")));
-}
-
-// void main() {
-//   runApp(MaterialApp(
-//     debugShowCheckedModeBanner: false,
-//     home: RobotInterface(), // This tells the app to start on the Login Page
-//   ));
-// }
-// }
