@@ -1,423 +1,357 @@
+// lib/src/screens/staff_interface.dart
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
-// --- IMPORTS ---
 import '../services/patient_data_service.dart';
-import '../services/call_service.dart'; // 🛑 NEW: Required for calling
 import '../services/communication_service.dart';
-import '../providers/user_provider.dart'; // 🛑 NEW: To get Staff ID
-import 'video_call_screen.dart';
-import 'patient_details_page.dart';
-import 'account.dart';
+import 'video_call_screen.dart'; // We will use the same screen for both parties
 
-// 🛑 Changed to StatefulWidget to handle Call Listening
-class StaffInterface extends StatefulWidget {
+class StaffInterface extends StatelessWidget {
   const StaffInterface({super.key});
 
   @override
-  State<StaffInterface> createState() => _StaffInterfaceState();
-}
-
-class _StaffInterfaceState extends State<StaffInterface> {
-  // Modern Color Palette
-  final Color primaryNavy = const Color(0xFF0D47A1);
-  final Color accentBlue = const Color(0xFF1976D2);
-  final Color bgGrey = const Color(0xFFF8FAFC);
-
-  bool _isListening = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // Start listening for calls as soon as the screen loads
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _startListeningForCalls();
-    });
-  }
-
-  // 🛑 FIX: Added mounted check and improved retry logic for listener initialization.
-  void _startListeningForCalls() {
-    if (!mounted || _isListening) return;
-
-    final userProvider = Provider.of<UserProvider>(context, listen: false);
-    final callService = Provider.of<CallService>(context, listen: false);
-
-    // 🛑 LOGIC: Listen for calls sent to this Staff Member's ID
-    final String? myStaffId = userProvider.userCustomId;
-
-    if (myStaffId != null && myStaffId.isNotEmpty) {
-      debugPrint("🎧 Staff Interface: LISTENER STARTED for calls to $myStaffId");
-      callService.startListeningForCalls(myStaffId);
-
-      // Use Future.microtask to update state after the current build cycle
-      Future.microtask(() {
-        if (mounted) {
-          setState(() {
-            _isListening = true;
-          });
-        }
-      });
-
-    } else {
-      debugPrint("⚠️ Staff Interface: ID ($myStaffId) missing/invalid. Retrying listener in 1 second.");
-      // Retry if ID is not immediately available (e.g., if UserProvider is still loading)
-      Future.delayed(const Duration(seconds: 1), () {
-        if (mounted) {
-          _startListeningForCalls();
-        }
-      });
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
+    // Watch the real-time data from Firebase
     final patientData = Provider.of<PatientDataService>(context);
 
-    // 🛑 WRAPPER: Consumer watches for incoming calls
-    return Consumer<CallService>(
-      builder: (context, callService, child) {
+    // Get the Communication Service for the video call (to initiate it)
+    final commService = Provider.of<CommunicationService>(context);
 
-        // 🚨 FIX: Guard navigation to prevent repeated pushes.
-        if (callService.currentCall != null &&
-            callService.currentCall!.status == 'ringing') {
+    // A simple breakpoint check for responsiveness
+    bool isLargeScreen = MediaQuery.of(context).size.width > 800;
 
-          final bool isStaffInterfaceRoute = ModalRoute.of(context)?.isCurrent ?? false;
-          // Check if the route directly above is NOT the IncomingCallScreen
-          final isIncomingCallScreenVisible = ModalRoute.of(context)?.settings.name == 'IncomingCallScreen';
-
-          if (isStaffInterfaceRoute && !isIncomingCallScreenVisible) {
-            Future.microtask(() {
-              // Push the IncomingCallScreen
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  // Use a distinct name for better route stack checking
-                  settings: const RouteSettings(name: 'IncomingCallScreen'),
-                  builder: (context) => IncomingCallScreen(
-                    callService: callService,
-                    callerName: callService.currentCall!.callerName,
-                  ),
-                ),
-              );
-            });
-          }
-        }
-
-        return Scaffold(
-          backgroundColor: bgGrey,
-          appBar: AppBar(
-            elevation: 0,
-            backgroundColor: Colors.white,
-            title: Text(
-                'STAFF HUB ${_isListening ? "(Online)" : "(Offline)"}',
-                style: TextStyle(color: primaryNavy, fontWeight: FontWeight.w900, letterSpacing: 1, fontSize: 18)
-            ),
-            centerTitle: false,
-            actions: [
-              //--- NOTIFICATION BUTTON ---
-              IconButton(
-                icon: Badge(
-                  label: const Text('2'),
-                  child: Icon(Icons.notifications_none_rounded, color: primaryNavy),
-                ),
-                onPressed: () => debugPrint("Notifications opened"),
-              ),
-              //--- ACCOUNT ICON BUTTON ---
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: GestureDetector(
-                  onTap: () {
-                    // Accessing UserProvider again for dynamic data
-                    final userProvider = Provider.of<UserProvider>(context, listen: false);
-                    AccountMenu.show(
-                        context,
-                        email: userProvider.userEmail ?? "N/A",
-                        userId: userProvider.userCustomId ?? "N/A"
-                    );
-                  },
-                  child: CircleAvatar(
-                    backgroundColor: primaryNavy.withOpacity(0.1),
-                    child: Icon(Icons.person_rounded, color: primaryNavy),
-                  ),
-                ),
-              ),
-            ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('PAR Optima Staff Dashboard'), // Renamed title
+        backgroundColor: Colors.indigo,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () {
+              // TODO: Implement Logout (Clear SharedPreferences 'isLoggedIn')
+              Navigator.pop(context); // Simple pop for now
+            },
           ),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(20.0),
-            child: Column(
-              children: [
-                if (patientData.emergencyPending) _buildEmergencyBanner(patientData),
-
-                // --- PATIENT SELECTOR / DETAILS BUTTON ---
-                _buildActionCard(
-                  title: "Patient Details",
-                  subtitle: "See patient details",
-                  icon: Icons.badge_outlined,
-                  color: primaryNavy,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => PatientDetailsPage()),
-                    );
-                  },
-                ),
-
-                const SizedBox(height: 16),
-
-                // --- MANUAL VIDEO CALL BUTTON (Fallback) ---
-                _buildActionCard(
-                  title: "Join Active Call",
-                  subtitle: "Manually join Room 402",
-                  icon: Icons.videocam_rounded,
-                  color: Colors.green[700]!,
-                  onTap: () {
-                    // Manual override for testing
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const VideoCallScreen(
-                          channelName: "room_402",
-                          isHost: true,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-
-                const SizedBox(height: 16),
-
-                // --- CALL ROBOT BUTTON ---
-                _buildActionCard(
-                  title: "Call Robot",
-                  subtitle: "Summon assistant to your location",
-                  icon: Icons.smart_toy_rounded,
-                  color: accentBlue,
-                  onTap: () => _showConfirmation(context),
-                ),
-
-                const SizedBox(height: 30),
-
-                // --- ROBOT STATUS SECTION ---
-                _buildRobotStatusFooter(patientData),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // --- REUSABLE ACTION CARD DESIGN ---
-  Widget _buildActionCard({
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: onTap,
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.all(20),
-          backgroundColor: Colors.white,
-          elevation: 2,
-          shadowColor: Colors.black12,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(15),
-              ),
-              child: Icon(icon, color: color, size: 30),
-            ),
-            const SizedBox(width: 20),
-            Expanded(
+        ],
+      ),
+      // Use a Row for the side-by-side layout on large screens
+      body: Row(
+        children: [
+          // Sidebar (Visible only on large screens)
+          if (isLargeScreen) const StaffSidebar(), // Renamed Sidebar
+          // Main Content Area
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: TextStyle(color: primaryNavy, fontSize: 18, fontWeight: FontWeight.bold)),
-                  Text(subtitle, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                  const Text(
+                    'Patient Status: John Doe (Room 402)',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                  const Divider(),
+
+                  // Row 1: Vitals and Call Button
+                  _buildStatusRow(context, patientData, commService),
+
+                  const SizedBox(height: 30),
+
+                  // Row 2: Robot Command and Meds Update
+                  _buildCommandRow(context, patientData),
+
+                  const SizedBox(height: 30),
+
+                  // Robot Status Card
+                  _buildRobotStatusCard(patientData),
+
+                  const SizedBox(height: 30),
+
+                  // Emergency Alert Card
+                  _buildEmergencyAlertCard(context, patientData),
                 ],
               ),
             ),
-            Icon(Icons.arrow_forward_ios_rounded, size: 16, color: Colors.grey[400]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // New widget for the Emergency Alert
+  Widget _buildEmergencyAlertCard(
+    BuildContext context,
+    PatientDataService patientData,
+  ) {
+    if (!patientData.emergencyPending) {
+      return Container(); // Hide if no emergency
+    }
+
+    return Card(
+      color: Colors.red[100],
+      elevation: 5,
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.warning, color: Colors.red, size: 40),
+                const SizedBox(width: 15),
+                Text(
+                  'EMERGENCY ALERT PENDING! Patient called for help.',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red[900],
+                  ),
+                ),
+              ],
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Resolve Alert'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 15,
+                ),
+              ),
+              onPressed: () {
+                // Set emergency status back to false in Firebase
+                patientData.setEmergency(false);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Emergency alert resolved.')),
+                );
+              },
+            ),
           ],
         ),
       ),
     );
   }
 
-  void _showConfirmation(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text("Robot Summoned"),
-        content: const Text("The robot is on the way to your current location."),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK")),
-        ],
-      ),
+  Widget _buildStatusRow(
+    BuildContext context,
+    PatientDataService patientData,
+    CommunicationService commService,
+  ) {
+    return Wrap(
+      // Use Wrap for automatic wrapping on small screens
+      spacing: 20,
+      runSpacing: 20,
+      children: [
+        // Vitals Display
+        VitalsCard(
+          title: 'Heart Rate',
+          value: '${patientData.heartRate} BPM',
+          icon: Icons.favorite,
+          color: Colors.red,
+        ),
+        VitalsCard(
+          title: 'Temperature',
+          value: '${patientData.temperature}°F',
+          icon: Icons.thermostat,
+          color: Colors.orange,
+        ),
+        VitalsCard(
+          title: 'Oxygen Sat.',
+          value: '${patientData.oxygenSat}%',
+          icon: Icons.opacity,
+          color: Colors.blue,
+        ),
+
+        // Video Call Button
+        Container(
+          width: 200,
+          height: 100,
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.video_call, size: 40),
+            label: const Text(
+              'Start Video Call',
+              style: TextStyle(fontSize: 16),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              minimumSize: const Size.fromHeight(100),
+            ),
+            onPressed: () {
+              // Staff joins the call on the same channel as the patient
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const VideoCallScreen(
+                    channelName: "Room402_Doctor",
+                    isHost: true, // Indicates this side is the staff/admin
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildEmergencyBanner(PatientDataService patientData) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 20),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.red[600],
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.bolt_rounded, color: Colors.white, size: 30),
-          const SizedBox(width: 15),
-          const Expanded(
-            child: Text("EMERGENCY ALERT ACTIVE",
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+  Widget _buildCommandRow(
+    BuildContext context,
+    PatientDataService patientData,
+  ) {
+    return Wrap(
+      spacing: 20,
+      runSpacing: 20,
+      children: [
+        // Robot Dispatch Button
+        Container(
+          width: 200,
+          height: 100,
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.send_time_extension, size: 30),
+            label: const Text('Dispatch Robot', style: TextStyle(fontSize: 16)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.purple,
+              minimumSize: const Size.fromHeight(100),
+            ),
+             onPressed: () => print('YES')
+               // patientData.sendRobotToRoom, // Publishes command to Firebase
           ),
-          TextButton(
-            onPressed: () => patientData.setEmergency(false),
-            style: TextButton.styleFrom(backgroundColor: Colors.white),
-            child: const Text("RESOLVE", style: TextStyle(color: Colors.red)),
-          )
-        ],
-      ),
+        ),
+
+        // Next Meds Update Field
+        SizedBox(
+          width: 250,
+          child: TextField(
+            onSubmitted: (value) {
+              patientData.setNextMedication(value); // Updates Firebase
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Next medication time set to: $value')),
+              );
+            },
+            decoration: InputDecoration(
+              labelText: 'Set Next Meds Time',
+              hintText: 'e.g., 3:30 PM',
+              border: OutlineInputBorder(),
+              suffixIcon: Icon(Icons.schedule),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildRobotStatusFooter(PatientDataService data) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: primaryNavy,
-        borderRadius: BorderRadius.circular(25),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.sensors_rounded, color: Colors.greenAccent),
-              const SizedBox(width: 10),
-              Text("Robot: ${data.robotStatus ?? 'Idle'}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const Text("88%", style: TextStyle(color: Colors.white70)),
-        ],
+  Widget _buildRobotStatusCard(PatientDataService patientData) {
+    return Card(
+      color: Colors.blueGrey[50],
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Robot Status',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              patientData.robotStatus ?? 'Loading...',
+              style: TextStyle(
+                fontSize: 22,
+                color: patientData.robotStatus == 'Dispatching'
+                    ? Colors.red
+                    : Colors.green,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-// ---------------------------------------------------------
-// 🛑 INCOMING CALL SCREEN CLASS (Added Here)
-// ---------------------------------------------------------
-class IncomingCallScreen extends StatelessWidget {
-  final CallService callService;
-  final String callerName;
+// Reusable Vitals Card Widget
+class VitalsCard extends StatelessWidget {
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color color;
 
-  const IncomingCallScreen({
+  const VitalsCard({
     super.key,
-    required this.callService,
-    required this.callerName,
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.color,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black87,
-      body: SafeArea(
+    return Card(
+      elevation: 4,
+      child: Container(
+        width: 200,
+        height: 100,
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // 1. Caller Info
-            const CircleAvatar(
-              radius: 60,
-              backgroundColor: Colors.grey,
-              child: Icon(Icons.person, size: 80, color: Colors.white),
-            ),
-            const SizedBox(height: 30),
-            const Text(
-              "INCOMING CALL",
-              style: TextStyle(color: Colors.white54, letterSpacing: 2.0),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              callerName,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 80),
-
-            // 2. Action Buttons (Accept / Decline)
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                // DECLINE BUTTON
-                Column(
-                  children: [
-                    FloatingActionButton.large(
-                      heroTag: "btnDecline", // Unique tag for hero animation
-                      onPressed: () {
-                        callService.endCall();
-                        Navigator.pop(context);
-                      },
-                      backgroundColor: Colors.redAccent,
-                      child: const Icon(Icons.call_end),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text("Decline", style: TextStyle(color: Colors.white)),
-                  ],
-                ),
-
-                // ACCEPT BUTTON
-                Column(
-                  children: [
-                    FloatingActionButton.large(
-                      heroTag: "btnAccept", // Unique tag for hero animation
-                      onPressed: () async {
-                        // 1. Update status
-                        await callService.acceptCall();
-
-                        // 2. Get Channel ID (defaulting to room_402 if missing)
-                        final channelId = callService.currentCall?.channelId ?? "room_402";
-
-                        if (context.mounted) {
-                          // 3. Navigate to Video Call
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => VideoCallScreen(
-                                channelName: channelId,
-                                isHost: true,
-                              ),
-                            ),
-                          );
-                        }
-                      },
-                      backgroundColor: Colors.greenAccent,
-                      child: const Icon(Icons.call),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text("Accept", style: TextStyle(color: Colors.white)),
-                  ],
+                Icon(icon, color: color, size: 24),
+                const SizedBox(width: 8),
+                Text(
+                  title,
+                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                 ),
               ],
             ),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// Simple placeholder for the Staff Sidebar
+class StaffSidebar extends StatelessWidget {
+  const StaffSidebar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 200,
+      color: Colors.indigo[900],
+      child: ListView(
+        children: const [
+          DrawerHeader(
+            child: Text(
+              'Staff Menu',
+              style: TextStyle(color: Colors.white, fontSize: 24),
+            ),
+          ),
+          ListTile(
+            leading: Icon(Icons.dashboard, color: Colors.white),
+            title: Text('Dashboard', style: TextStyle(color: Colors.white)),
+          ),
+          ListTile(
+            leading: Icon(Icons.people, color: Colors.white70),
+            title: Text(
+              'Patients List',
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+        ],
       ),
     );
   }

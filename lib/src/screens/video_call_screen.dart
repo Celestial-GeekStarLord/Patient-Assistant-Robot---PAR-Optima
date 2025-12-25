@@ -2,11 +2,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-// 🛑 IMPORTANT: Use the prefixed import for Agora enums/classes
-import 'package:agora_rtc_engine/agora_rtc_engine.dart' as agora;
+import 'package:agora_rtc_engine/agora_rtc_engine.dart'; // 🛑 Correct import for video views
 import '../services/communication_service.dart';
-import '../services/call_service.dart'; // 🛑 NEW: Use the dedicated CallService
-import '../providers/user_provider.dart'; // 🛑 NEW: Required for fetching user ID/name
+import '../services/patient_data_service.dart';
 
 class VideoCallScreen extends StatefulWidget {
   final String channelName;
@@ -23,9 +21,8 @@ class VideoCallScreen extends StatefulWidget {
 }
 
 class _VideoCallScreenState extends State<VideoCallScreen> {
-  // State variables for UI controls
   bool isMuted = false;
-  bool isVideoDisabled = false; // New state variable for video toggle
+  bool isVideoDisabled = false;
 
   @override
   void initState() {
@@ -34,98 +31,60 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   void _initializeCall() async {
-    // We use listen: false since this is in initState
     final commService = Provider.of<CommunicationService>(
       context,
       listen: false,
     );
-    final callService = Provider.of<CallService>(
+    final patientService = Provider.of<PatientDataService>(
       context,
       listen: false,
     );
-    // 🛑 NEW: Fetch UserProvider to get IDs for joining the channel
-    final userProvider = Provider.of<UserProvider>(
-      context,
-      listen: false,
-    );
-
-    // Get required IDs
-    // 🛑 FIX: Removed the non-existent 'userProvider.userId' fallback.
-    final String uid = userProvider.userCustomId ?? '0';
-    final String callerName = userProvider.userName ?? 'User';
-
-    // 🛑 CRITICAL FIX: Ensure the Agora Engine is initialized before joining the channel.
-    if (commService.engine == null) {
-      debugPrint("🛠️ Initializing Agora Engine from VideoCallScreen...");
-      try {
-        await commService.initAgora();
-        debugPrint("✅ Agora Engine Initialized.");
-      } catch (e) {
-        debugPrint("🔴 ERROR: Failed to initialize Agora Engine: $e");
-        return;
-      }
-    }
 
     // 1. Join the Agora Channel
-    // 🛑 FIX: Pass all three required arguments (channelName, uid, callerName)
-    await commService.joinCall(widget.channelName, uid, callerName);
+    await commService.joinCall(widget.channelName);
 
-    // 2. Update Firebase Signaling Status using the new CallService
-    // Only update status if the call is currently ringing (i.e., this user is the receiver).
-    if (callService.currentCall?.status == 'ringing') {
-      await callService.acceptCall();
-      debugPrint("✅ CallService: Status changed to 'accepted'.");
+    // 2. Update Firebase Signaling Status
+    // Note: The channelName in this example is static ("room_402"),
+    // but in a multi-room app, you would pass a dynamic ID to setCallStatus
+    if (!widget.isHost) {
+      // If Patient or Robot initiates the call, set status to 'Calling'
+      patientService.setCallStatus('Patient Calling Staff');
+    } else {
+      // If Staff initiated the call, they are just joining
+      patientService.setCallStatus('In Call');
     }
   }
 
   void _onCallEnd(BuildContext context) async {
-    // 1. Get Services
     final commService = Provider.of<CommunicationService>(
       context,
       listen: false,
     );
-    final callService = Provider.of<CallService>(
+    final patientService = Provider.of<PatientDataService>(
       context,
       listen: false,
     );
 
-    debugPrint("🛑 END CALL: Starting cleanup sequence...");
+    // 1. Reset Firebase Call Status
+    await patientService.setCallStatus('Idle');
 
-    try {
-      // 2. End the Agora Call and release resources first.
-      await commService.endCall();
-      debugPrint("✅ Agora Engine released.");
-    } catch (e) {
-      debugPrint("⚠️ WARNING: Error during commService.endCall(): $e");
-    }
+    // 2. End the Agora Call and release resources
+    await commService.endCall();
 
-    try {
-      // 3. Reset Firebase Call Status using the CallService
-      // This removes the call document from Firebase.
-      await callService.endCall();
-      debugPrint("✅ Firebase Call Document removed.");
-    } catch (e) {
-      debugPrint("⚠️ WARNING: Error during callService.endCall(): $e");
-    }
-
-    // 4. Navigate back ONLY IF the widget is still mounted.
-    if (mounted) {
-      Navigator.pop(context);
-      debugPrint("✅ Navigation complete.");
-    } else {
-      debugPrint("❌ Widget not mounted. Navigation skipped.");
-    }
+    // 3. Navigate back
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    // Listen to changes in CommunicationService (remoteUid, localUserJoined)
     final commService = Provider.of<CommunicationService>(context);
+
+    //
 
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.isHost ? 'Staff Call: ${widget.channelName}' : 'Robot Call',
+          widget.isHost ? 'Staff Call: ${widget.channelName}' : 'Patient Call',
         ),
         backgroundColor: Colors.indigo,
         automaticallyImplyLeading: false,
@@ -161,28 +120,23 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   // -------------------------
-  // VIDEO RENDERERS (Updated to use prefixed Agora classes)
+  // VIDEO RENDERERS
   // -------------------------
 
   // Renders the remote user's video feed
   Widget _remoteVideo(CommunicationService commService) {
     // Show a fallback widget if the engine hasn't been initialized yet
-    if (commService.engine == null) {
-      return Container(
-        color: Colors.black,
-        child: const Center(
-          child: Text('Initializing...', style: TextStyle(color: Colors.white)),
-        ),
+    if (commService.engine == null)
+      return const Center(
+        child: Text('Initializing...', style: TextStyle(color: Colors.white)),
       );
-    }
 
     if (commService.remoteUid != null) {
-      // 🛑 FIX: Use prefixed Agora classes
-      return agora.AgoraVideoView(
-        controller: agora.VideoViewController.remote(
+      return AgoraVideoView(
+        controller: VideoViewController.remote(
           rtcEngine: commService.engine!,
-          canvas: const agora.VideoCanvas(), // uid is 0 for the local user in remote canvas
-          connection: agora.RtcConnection(channelId: widget.channelName),
+          canvas: VideoCanvas(uid: commService.remoteUid),
+          connection: RtcConnection(channelId: widget.channelName),
         ),
       );
     } else {
@@ -200,7 +154,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   // Renders the local user's video feed
   Widget _localVideo(CommunicationService commService) {
-    // Show a fallback widget if the engine hasn't been initialized yet or user hasn't joined
+    // Show a fallback widget if the engine hasn't been initialized yet
     if (commService.engine == null || !commService.localUserJoined) {
       return Container(
         color: Colors.grey[800],
@@ -210,28 +164,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       );
     }
 
-    // If local video is explicitly disabled by the user
-    if (isVideoDisabled) {
-      return Container(
-        color: Colors.grey[800],
-        child: const Center(
-          child: Icon(Icons.person, color: Colors.white, size: 40), // Placeholder icon
-        ),
-      );
-    }
-
     // Use uid = 0 for the local stream
-    // 🛑 FIX: Use prefixed Agora classes
-    return agora.AgoraVideoView(
-      controller: agora.VideoViewController(
+    return AgoraVideoView(
+      controller: VideoViewController(
         rtcEngine: commService.engine!,
-        canvas: const agora.VideoCanvas(uid: 0),
+        canvas: const VideoCanvas(uid: 0),
       ),
     );
   }
 
   // -------------------------
-  // TOOLBAR CONTROLS (UNCHANGED, relies on fixed service methods)
+  // TOOLBAR CONTROLS
   // -------------------------
   Widget _toolbar(BuildContext context, CommunicationService commService) {
     return Align(
@@ -242,13 +185,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: <Widget>[
-            // Mute Audio Button
+            // Mute Button
             RawMaterialButton(
               onPressed: () {
-                setState(() {
-                  isMuted = !isMuted;
-                  commService.toggleMute(isMuted);
-                });
+                isMuted = !isMuted;
+                commService.toggleMute(isMuted);
+                setState(() {});
               },
               shape: const CircleBorder(),
               elevation: 2.0,
@@ -257,25 +199,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               child: Icon(
                 isMuted ? Icons.mic_off : Icons.mic,
                 color: isMuted ? Colors.white : Colors.blueGrey,
-                size: 20.0,
-              ),
-            ),
-
-            // Mute Video Button
-            RawMaterialButton(
-              onPressed: () {
-                setState(() {
-                  isVideoDisabled = !isVideoDisabled;
-                  commService.toggleVideo(isVideoDisabled);
-                });
-              },
-              shape: const CircleBorder(),
-              elevation: 2.0,
-              fillColor: isVideoDisabled ? Colors.blueGrey : Colors.white,
-              padding: const EdgeInsets.all(12.0),
-              child: Icon(
-                isVideoDisabled ? Icons.videocam_off : Icons.videocam,
-                color: isVideoDisabled ? Colors.white : Colors.blueGrey,
                 size: 20.0,
               ),
             ),
