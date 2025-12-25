@@ -3,7 +3,8 @@ import 'package:provider/provider.dart';
 
 // 🛑 NEW IMPORTS
 import '../services/patient_data_service.dart'; // Handles Firebase Realtime Database
-import 'report.dart'; // Assuming report.dart is now report_screen.dart for consistency
+import 'report.dart';
+import 'account.dart';// Assuming report.dart is now report_screen.dart for consistency
 // Note: We don't import CommunicationService here because the Patient doesn't directly initiate the video call
 
 class PatientDashboard extends StatelessWidget {
@@ -62,7 +63,13 @@ class PatientDashboard extends StatelessWidget {
                       width: 60,
                       height: 60,
                       child: ElevatedButton(
-                        onPressed: () => print("Account Clicked"),
+                        onPressed: () {
+                          AccountMenu.show(
+                              context,
+                              email: "staff@hospital.com",
+                              userId: "STF-9921"
+                          );
+                        },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
                           padding: EdgeInsets.zero,
