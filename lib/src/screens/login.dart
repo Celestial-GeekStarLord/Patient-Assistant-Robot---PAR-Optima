@@ -35,17 +35,21 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _handleLogin() async {
     // Basic validation check
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      setState(() => _errorMessage = "Please enter both email and password.");
+      if (mounted) {
+        setState(() => _errorMessage = "Please enter both email and password.");
+      }
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
 
+    bool success = false;
     try {
-      // Access the AuthService instance via Provider
       final authService = Provider.of<AuthService>(context, listen: false);
 
       // 1. Attempt to sign in using the AuthService
@@ -53,6 +57,7 @@ class _LoginPageState extends State<LoginPage> {
         email: _emailController.text,
         password: _passwordController.text,
       );
+      success = true;
 
       // 2. On success, navigate to the Role-Based Router (HomePage).
       if (mounted) {
@@ -63,14 +68,18 @@ class _LoginPageState extends State<LoginPage> {
 
     } catch (e) {
       // 3. Handle and display errors (e.g., Wrong Password, User Not Found from Firebase Auth)
-      setState(() {
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
     } finally {
-      // 4. Stop loading, regardless of success or failure
-      setState(() {
-        _isLoading = false;
-      });
+      // 🛑 FIX: Only call setState if the widget is still mounted AND the navigation failed/didn't occur.
+      if (mounted && !success) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 

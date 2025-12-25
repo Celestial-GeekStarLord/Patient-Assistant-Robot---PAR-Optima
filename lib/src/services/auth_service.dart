@@ -47,7 +47,7 @@ class AuthService {
 
     if (upperId.startsWith('PAT')) {
       role = 'patient';
-      // Extracts the number part (e.g., '402' from PAT402_JohnSmith)
+      // Extracts the \number part (e.g., '402' from PAT402_JohnSmith)
       final roomNumber = upperId.substring(3).split('_').first;
       channelId = 'room_$roomNumber';
     } else if (upperId.startsWith('STF')) {

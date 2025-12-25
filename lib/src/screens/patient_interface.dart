@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-// 🛑 NEW IMPORTS
-import '../services/patient_data_service.dart'; // Handles Firebase Realtime Database
+// --- UPDATED IMPORTS ---
+import '../services/patient_data_service.dart';
+import '../providers/user_provider.dart'; // <<< Use the actual provider
 import 'report.dart';
-import 'account.dart';// Assuming report.dart is now report_screen.dart for consistency
-// Note: We don't import CommunicationService here because the Patient doesn't directly initiate the video call
+import 'account.dart';
+
+// ----------------------------------------------------------------------
+// NOTE: The temporary UserModel definition remains commented/removed here
+// as the user data is accessed via UserProvider, which is correct.
+// ----------------------------------------------------------------------
 
 class PatientDashboard extends StatelessWidget {
+  const PatientDashboard({super.key});
+
   // Theme Colors
   final Color skyBlue = const Color(0xFF87CEEB);
   final Color offWhite = const Color(0xFFF0F4F8);
@@ -15,13 +22,24 @@ class PatientDashboard extends StatelessWidget {
   final Color medOrange = const Color(0xFFFFB74D);
   final Color staffGreen = const Color(0xFF4CAF50);
 
-  // 🛑 Patient ID is used for Firebase path and logic
-  final String currentPatientID = "402";
-
   @override
   Widget build(BuildContext context) {
-    // 🛑 DATA ACCESS: Get real-time data from Firebase via the service
-    final patientData = Provider.of<PatientDataService>(context);
+    // 🛑 DATA ACCESS: Get real-time patient-specific data
+    final patientDataService = Provider.of<PatientDataService>(context);
+
+    // 🛑 DATA ACCESS: Use the UserProvider to access user details
+    final userProvider = Provider.of<UserProvider>(context);
+
+    // DYNAMIC: Accessing user data via UserProvider's getters
+    final String currentPatientName = userProvider.userName ?? "Patient";
+    final String currentRoomNumber = userProvider.roomNumber;
+    final String currentEmail = userProvider.userEmail ?? "N/A";
+    final String currentCustomId = userProvider.userCustomId ?? "N/A";
+
+    // We keep this variable for the setEmergency call, even though it's not strictly
+    // needed for requestRobot now.
+    final String currentChannelId = userProvider.userChannelId ?? "N/A";
+
 
     return Scaffold(
       backgroundColor: offWhite,
@@ -40,17 +58,17 @@ class PatientDashboard extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 🛑 DYNAMIC: Patient Name
-                        const Text(
-                          "Alex Johnson",
-                          style: TextStyle(
+                        // 🛑 DYNAMIC: Patient Name from UserProvider
+                        Text(
+                          currentPatientName,
+                          style: const TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        // 🛑 DYNAMIC: Room ID
+                        // 🛑 DYNAMIC: Room ID from UserProvider
                         Text(
-                          "Room $currentPatientID",
+                          "Room $currentRoomNumber",
                           style: TextStyle(
                             color: Colors.blueGrey,
                             fontSize: 16,
@@ -64,10 +82,11 @@ class PatientDashboard extends StatelessWidget {
                       height: 60,
                       child: ElevatedButton(
                         onPressed: () {
+                          // Pass dynamic user data to the AccountMenu
                           AccountMenu.show(
                               context,
-                              email: "staff@hospital.com",
-                              userId: "STF-9921"
+                              email: currentEmail,
+                              userId: currentCustomId // Use the custom ID for display
                           );
                         },
                         style: ElevatedButton.styleFrom(
@@ -92,7 +111,7 @@ class PatientDashboard extends StatelessWidget {
                 width: double.infinity,
                 height: 90,
                 child: ElevatedButton(
-                  onPressed: () => print("Medication Details Clicked"),
+                  onPressed: () => debugPrint("Medication Details Clicked"),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: medOrange,
                     shape: RoundedRectangleBorder(
@@ -116,9 +135,9 @@ class PatientDashboard extends StatelessWidget {
                             "Next Medication",
                             style: TextStyle(color: Colors.white, fontSize: 14),
                           ),
-                          // 🛑 DYNAMIC: Next Meds Time from Firebase
+                          // 🛑 DYNAMIC: Next Meds Time from PatientDataService
                           Text(
-                            patientData.nextMedsTime,
+                            patientDataService.nextMedsTime,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 18,
@@ -145,10 +164,11 @@ class PatientDashboard extends StatelessWidget {
                     SizedBox(
                       child: ElevatedButton(
                         onPressed: () {
-                          // 🛑 ACTION: Navigate to the Medical Report/History screen
+                          // ACTION: Navigate to the Medical Report/History screen
                           Navigator.push(
                             context,
                             MaterialPageRoute(
+                              // NOTE: Assuming ReportPage is a StatelessWidget/StatefulWidget
                               builder: (context) => ReportPage(),
                             ),
                           );
@@ -185,8 +205,8 @@ class PatientDashboard extends StatelessWidget {
                     SizedBox(
                       child: ElevatedButton(
                         onPressed: () {
-                          // 🛑 ACTION: Call Robot via Firebase (Sends command to the robot interface)
-                          patientData.requestRobot(currentPatientID);
+                          // 🛑 FIX APPLIED HERE: requestRobot() no longer takes an argument
+                          patientDataService.requestRobot();
 
                           // Show the Pop-up confirmation
                           _showConfirmation(context, "Robot is on the way!");
@@ -198,16 +218,16 @@ class PatientDashboard extends StatelessWidget {
                           ),
                           elevation: 2,
                         ),
-                        child: Column(
+                        child: const Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(
+                            Icon(
                               Icons.smart_toy_rounded,
                               size: 50,
                               color: Colors.indigoAccent,
                             ),
-                            const SizedBox(height: 10),
-                            const Text(
+                            SizedBox(height: 10),
+                            Text(
                               "Call Robot",
                               style: TextStyle(
                                 color: Colors.black87,
@@ -230,8 +250,11 @@ class PatientDashboard extends StatelessWidget {
                   height: 80,
                   child: ElevatedButton(
                     onPressed: () {
-                      // 🛑 ACTION: Trigger Emergency via Firebase
-                      patientData.setEmergency(true);
+                      // 🛑 ACTION: Trigger Emergency via Firebase.
+                      // The service already knows the channelId from its initialization.
+                      // FIX APPLIED: Removed the named parameter 'channelId'.
+                      patientDataService.setEmergency(true);
+
                       _showConfirmation(context, "Staff Alerted");
                     },
                     style: ElevatedButton.styleFrom(
@@ -304,3 +327,5 @@ class PatientDashboard extends StatelessWidget {
     );
   }
 }
+
+

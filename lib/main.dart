@@ -2,20 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 
-// --- NEW/UPDATED CORE IMPORTS ---
-import 'src/services/auth_service.dart'; // The core authentication logic
-import 'src/providers/user_provider.dart'; // Stores user profile and role
-import 'src/screens/home_page.dart'; // The Role-Based Router
-import 'src/screens/login.dart'; // The login screen (assuming renamed from login.dart)
-
-// 🛑 Existing Imports
-import 'src/screens/patient_interface.dart'; // Assuming this is now PatientInterface
-import 'src/screens/robot_interface.dart';
-import 'src/screens/staff_interface.dart';
+// --- CORE SERVICES IMPORTS ---
+import 'src/services/auth_service.dart';
+import 'src/services/call_service.dart'; // 🛑 NEW: Import CallService
 import 'src/services/communication_service.dart';
 import 'src/services/patient_data_service.dart';
+
+// --- PROVIDER & SCREEN IMPORTS ---
+import 'src/providers/user_provider.dart';
+import 'src/screens/home_page.dart';
+import 'src/screens/login.dart';
 import 'firebase_options.dart';
-// Note: SharedPreferences is no longer needed for auth
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,7 +29,7 @@ Future<void> main() async {
 
   // --- Initialize Services ---
   final commService = CommunicationService();
-  final authService = AuthService(); // Create AuthService instance
+  final authService = AuthService();
 
   // 2. AGORA ENGINE INITIALIZATION
   try {
@@ -46,23 +43,39 @@ Future<void> main() async {
   runApp(
     MultiProvider(
       providers: [
-        // 1. NEW: Provide AuthService for sign-in/sign-up/state changes
+        // 1. AuthService (Base Service)
         Provider<AuthService>(create: (_) => authService),
 
-        // 2. NEW: Provide UserProvider, dependent on AuthService, to hold the role
+        // 2. UserProvider (Depends on AuthService)
         ChangeNotifierProvider<UserProvider>(
           create: (context) => UserProvider(authService),
         ),
 
-        // 3. Existing: PatientDataService
-        ChangeNotifierProvider<PatientDataService>(
-          create: (_) => PatientDataService(),
-        ),
-
-        // 4. Existing: CommunicationService
+        // 3. CommunicationService
         ChangeNotifierProvider<CommunicationService>.value(value: commService),
+
+        // 4. CallService (🛑 FIX: Added to resolve "Provider not found" error)
+        ChangeNotifierProvider<CallService>(create: (_) => CallService()),
+
+        // 5. PatientDataService (Depends on UserProvider)
+        ChangeNotifierProxyProvider<UserProvider, PatientDataService>(
+          update: (context, userProvider, previousPatientService) {
+            final String? channelId = userProvider.userChannelId;
+
+            if (channelId != null) {
+              if (previousPatientService != null &&
+                  previousPatientService.channelId == channelId) {
+                return previousPatientService;
+              }
+              return PatientDataService(channelId: channelId);
+            } else {
+              return PatientDataService(channelId: 'dummy_loading_path');
+            }
+          },
+          create: (_) => PatientDataService(channelId: 'initial_load_path'),
+        ),
       ],
-      child: const ParOptimaApp(), // No need for initial state parameters anymore
+      child: const ParOptimaApp(),
     ),
   );
 }
@@ -70,7 +83,6 @@ Future<void> main() async {
 class ParOptimaApp extends StatelessWidget {
   const ParOptimaApp({super.key});
 
-  // The MaterialApp now relies on the StreamBuilder to determine the initial screen
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -80,25 +92,20 @@ class ParOptimaApp extends StatelessWidget {
         primarySwatch: Colors.indigo,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-
       // Home widget uses StreamBuilder to react to Firebase Auth state
       home: StreamBuilder(
-        // Listen to Firebase Authentication state changes (login/logout)
         stream: Provider.of<AuthService>(context).authStateChanges,
         builder: (context, snapshot) {
-          // Show a simple loading screen while the connection is established
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Scaffold(body: Center(child: CircularProgressIndicator()));
           }
 
-          // If there is an authenticated user (logged in)
           if (snapshot.hasData && snapshot.data != null) {
-            // User is logged in. Send them to the router (HomePage) to fetch their role
-            // and navigate to the correct dashboard.
+            // User is logged in, go to Home Page
             return const HomePage();
           }
 
-          // If no user is logged in
+          // User is logged out, go to Login
           return const LoginPage();
         },
       ),
