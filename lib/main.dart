@@ -1,19 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 
-// 🛑 Local Imports - Ensure these paths are correct in your project
-import 'src/screens/login.dart';
-import 'src/screens/patient_interface.dart';
+// --- NEW/UPDATED CORE IMPORTS ---
+import 'src/services/auth_service.dart'; // The core authentication logic
+import 'src/providers/user_provider.dart'; // Stores user profile and role
+import 'src/screens/home_page.dart'; // The Role-Based Router
+import 'src/screens/login.dart'; // The login screen (assuming renamed from login.dart)
+
+// 🛑 Existing Imports
+import 'src/screens/patient_interface.dart'; // Assuming this is now PatientInterface
 import 'src/screens/robot_interface.dart';
 import 'src/screens/staff_interface.dart';
 import 'src/services/communication_service.dart';
 import 'src/services/patient_data_service.dart';
 import 'firebase_options.dart';
+// Note: SharedPreferences is no longer needed for auth
 
 Future<void> main() async {
-  // Always call this first when using plugins
   WidgetsFlutterBinding.ensureInitialized();
 
   // 1. FIREBASE INITIALIZATION
@@ -23,85 +27,50 @@ Future<void> main() async {
     );
     debugPrint("Firebase Initialized.");
   } catch (e) {
-    debugPrint(
-      '🛑 ERROR: Firebase initialization failed. Did you run flutterfire configure? Error: $e',
-    );
+    debugPrint('🛑 ERROR: Firebase initialization failed. Error: $e');
   }
 
-  // 2. AGORA ENGINE INITIALIZATION
+  // --- Initialize Services ---
   final commService = CommunicationService();
+  final authService = AuthService(); // Create AuthService instance
+
+  // 2. AGORA ENGINE INITIALIZATION
   try {
     await commService.initAgora();
     debugPrint("Agora Engine Initialized.");
   } catch (e) {
-    debugPrint(
-      '🛑 ERROR: Agora initialization failed. Check App ID/Permissions. Error: $e',
-    );
+    debugPrint('🛑 ERROR: Agora initialization failed. Error: $e');
   }
 
-  // 3. AUTO-LOGIN CHECK
-  bool isLoggedIn = false;
-  String userType = 'unknown';
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
-    userType = prefs.getString('userType') ?? 'unknown';
-  } catch (e) {
-    debugPrint('Error accessing SharedPreferences for login check: $e');
-  }
-
-  // 4. LAUNCH APPLICATION
+  // 3. LAUNCH APPLICATION WITH PROVIDERS
   runApp(
     MultiProvider(
       providers: [
-        // Provides real-time data from Firebase to the UI
+        // 1. NEW: Provide AuthService for sign-in/sign-up/state changes
+        Provider<AuthService>(create: (_) => authService),
+
+        // 2. NEW: Provide UserProvider, dependent on AuthService, to hold the role
+        ChangeNotifierProvider<UserProvider>(
+          create: (context) => UserProvider(authService),
+        ),
+
+        // 3. Existing: PatientDataService
         ChangeNotifierProvider<PatientDataService>(
           create: (_) => PatientDataService(),
         ),
-        // 🛑 FIX APPLIED: Changed to ChangeNotifierProvider.value to handle
-        // the CommunicationService's notifyListeners() calls correctly.
+
+        // 4. Existing: CommunicationService
         ChangeNotifierProvider<CommunicationService>.value(value: commService),
       ],
-      child: ParOptimaApp(
-        isLoggedIn: isLoggedIn,
-        userType: userType,
-      ),
+      child: const ParOptimaApp(), // No need for initial state parameters anymore
     ),
   );
 }
 
 class ParOptimaApp extends StatelessWidget {
-  final bool isLoggedIn;
-  final String userType;
+  const ParOptimaApp({super.key});
 
-  const ParOptimaApp({
-    super.key,
-    required this.isLoggedIn,
-    required this.userType,
-  });
-
-  // Determines the screen to show based on login status and user type
-  Widget _getInitialScreen() {
-    if (!isLoggedIn) {
-      // 🛑 Initial state: User must log in
-      return StaffInterface();
-    }
-
-    // 🛑 If logged in, route based on user type
-    switch (userType) {
-      case 'patient':
-      // 🛑 FIX APPLIED: Removed 'const' keyword here as PatientDashboard is non-const.
-        return PatientDashboard();
-      case 'staff':
-        return const StaffInterface();
-      case 'robot':
-        return RobotInterface();
-      default:
-      // Fallback or re-login if type is unknown
-        return LoginPage();
-    }
-  }
-
+  // The MaterialApp now relies on the StreamBuilder to determine the initial screen
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -111,20 +80,28 @@ class ParOptimaApp extends StatelessWidget {
         primarySwatch: Colors.indigo,
         visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: _getInitialScreen(),
+
+      // Home widget uses StreamBuilder to react to Firebase Auth state
+      home: StreamBuilder(
+        // Listen to Firebase Authentication state changes (login/logout)
+        stream: Provider.of<AuthService>(context).authStateChanges,
+        builder: (context, snapshot) {
+          // Show a simple loading screen while the connection is established
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          }
+
+          // If there is an authenticated user (logged in)
+          if (snapshot.hasData && snapshot.data != null) {
+            // User is logged in. Send them to the router (HomePage) to fetch their role
+            // and navigate to the correct dashboard.
+            return const HomePage();
+          }
+
+          // If no user is logged in
+          return const LoginPage();
+        },
+      ),
     );
   }
 }
-
-// 🛑 IMPORTANT: These placeholder classes should be REMOVED from main.dart
-// once you create the actual files they import from (e.g., login.dart).
-// I will remove them here, assuming your actual imports (like 'src/screens/login.dart')
-// define them correctly.
-
-// void main() {
-//   runApp(MaterialApp(
-//     debugShowCheckedModeBanner: false,
-//     home: RobotInterface(), // This tells the app to start on the Login Page
-//   ));
-// }
-// }
