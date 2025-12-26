@@ -2,20 +2,21 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_database/firebase_database.dart'; // Needed for DatabaseEvent
 
 // REQUIRED CALL/LOGIC IMPORTS
 import '../providers/user_provider.dart';
 import '../services/firebase_call_service.dart';
 import '../services/call_service.dart'; // For CallStatus enum
 import '../services/communication_service.dart';
-import '../services/patient_data_service.dart';
+import '../services/patient_data_service.dart'; // CRITICAL: Now used for multi-patient stream
 
 // SCREEN IMPORTS
 import 'video_call_screen.dart';
-import 'patient_details_page.dart'; // Ensure this file exists
-import 'account.dart'; // Ensure this file exists - needed for AccountMenu
+import 'patient_details_page.dart';
+import 'account.dart'; // Needed for AccountMenu
 
-// CONVERTED TO STATEFULWIDGET (For call listening logic)
+// CONVERTED TO STATEFULWIDGET
 class StaffInterface extends StatefulWidget {
   const StaffInterface({super.key});
 
@@ -36,23 +37,135 @@ class _StaffInterfaceState extends State<StaffInterface> {
   final Color bgGrey = const Color(0xFFF8FAFC);
   final Color redAlert = Colors.red[700]!;
 
+  // 🛑 NEW STATE: To track an active emergency from ANY patient
+  String? _activeEmergencyId; // Stores the patient ID (e.g., 'P123') in emergency
+
   @override
   void initState() {
     super.initState();
-    // Use addPostFrameCallback to ensure the widget and its context are fully built
-    // before attempting to access Providers and start the listener.
+    // Start the call listener and the emergency listener after the widget is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startCallListener(context);
+      // 🛑 NEW: Start the multi-patient emergency database listener
+      _startEmergencyListener(context);
     });
   }
+
+  // --- LOGIC: EMERGENCY LISTENER SETUP ---
+  void _startEmergencyListener(BuildContext context) {
+    try {
+      final patientDataService = Provider.of<PatientDataService>(context, listen: false);
+
+      // Listen to the root 'patient' node for changes across all patients
+      patientDataService.watchAllPatientStates().listen((DatabaseEvent event) {
+        if (!mounted || event.snapshot.value == null) return;
+
+        final Map<dynamic, dynamic>? patientsData = event.snapshot.value as Map?;
+        if (patientsData == null) return;
+
+        String? newEmergencyPatientId;
+
+        // Iterate through all patients to find the active emergency
+        patientsData.forEach((key, value) {
+          final state = value['state'] as Map<dynamic, dynamic>?;
+          if (state != null && state['emergency'] == true) {
+            newEmergencyPatientId = key.toString(); // Found an active emergency
+          }
+        });
+
+        // Update UI state if the emergency status has changed
+        if (newEmergencyPatientId != _activeEmergencyId) {
+          setState(() {
+            _activeEmergencyId = newEmergencyPatientId;
+          });
+
+          if (_activeEmergencyId != null) {
+            // Trigger the modal alert only when a NEW emergency is found
+            _showAlert(context, _activeEmergencyId!);
+          }
+        }
+      }).onError((error) {
+        debugPrint('RTDB Multi-Patient Listener Error: $error');
+      });
+    } catch (e) {
+      debugPrint('ERROR: Failed to start emergency listener. Error: $e');
+    }
+  }
+
+  // --- ALERT DIALOG HANDLERS ---
+
+  void _showAlert(BuildContext context, String patientId) {
+    // If the call ringing overlay is already showing, avoid stacking dialogs,
+    // but ensure the red emergency banner is visible below.
+    if (context.read<FirebaseCallService>().status == CallStatus.ringing) {
+      return;
+    }
+
+    // Dismiss the previous alert if necessary
+    if (Navigator.canPop(context) && ModalRoute.of(context)!.isCurrent == false) {
+      Navigator.pop(context);
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: Colors.red[50],
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_rounded, color: Colors.red, size: 30),
+              SizedBox(width: 10),
+              Text("EMERGENCY ALERT!"),
+            ],
+          ),
+          content: Text(
+            "Patient $patientId requires IMMEDIATE assistance. Check details or accept the incoming call.",
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => _acknowledgeAlert(context, patientId),
+              style: ElevatedButton.styleFrom(backgroundColor: redAlert, elevation: 5),
+              child: const Text("ACKNOWLEDGE & RESOLVE", style: TextStyle(color: Colors.white)),
+            ),
+            TextButton(
+              onPressed: () {
+                // Just dismiss the dialog, leaving the status active
+                Navigator.pop(ctx);
+              },
+              child: Text("VIEW LATER", style: TextStyle(color: primaryNavy)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _acknowledgeAlert(BuildContext context, String patientId) {
+    final patientDataService = context.read<PatientDataService>();
+
+    // 1. Reset the database flag for the specific patient
+    patientDataService.clearEmergency(patientId);
+
+    // 2. Dismiss the local dialog
+    if (Navigator.canPop(context)) {
+      Navigator.pop(context);
+    }
+
+    // 4. Show confirmation
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Emergency for Patient $patientId has been resolved in database.')),
+    );
+  }
+
+  // --- END: EMERGENCY LISTENER SETUP ---
 
   // --- LOGIC: CALL LISTENER SETUP ---
   void _startCallListener(BuildContext context) {
     try {
-      // FIX: Access the Provider using listen: false inside the callback
       final firebaseCallService = Provider.of<FirebaseCallService>(context, listen: false);
-
-      // CRITICAL: All staff devices listen on the same, common Firebase node.
       final String localListenId = COMMON_STAFF_LISTEN_ID;
 
       firebaseCallService.startListeningForCalls(localListenId);
@@ -82,12 +195,20 @@ class _StaffInterfaceState extends State<StaffInterface> {
       userUid: staffUid,
     );
 
-    // 3. Navigate to the call screen
+    // 3. Optional: If the call was an emergency, acknowledge the alert
+    if (_activeEmergencyId != null && currentCall.channelId.contains('emergency')) {
+      // Automatically resolve the emergency flag if the staff accepts the emergency call
+      context.read<PatientDataService>().clearEmergency(_activeEmergencyId!);
+      setState(() { _activeEmergencyId = null; });
+    }
+
+
+    // 4. Navigate to the call screen
     if (mounted) {
       Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => VideoCallScreen(
           channelName: currentCall.channelId,
-          isHost: false, // Staff is joining the call
+          isHost: true, // Staff is the Host (receiving side accepting control)
         ),
       ));
     }
@@ -95,7 +216,6 @@ class _StaffInterfaceState extends State<StaffInterface> {
 
   /// Handles the action when the Staff declines the call.
   void _declineIncomingCall(FirebaseCallService callService) async {
-    // This clears the call node for everyone, stopping the ringing.
     await callService.declineCall();
   }
   // --- END: CALL LISTENER SETUP ---
@@ -103,7 +223,7 @@ class _StaffInterfaceState extends State<StaffInterface> {
 
   // --- UI HELPER METHODS ---
 
-  // --- POPUP MESSAGE ---
+  // --- POPUP MESSAGE (for "Call Robot to Station") ---
   void _showConfirmation(BuildContext context) {
     showDialog(
       context: context,
@@ -118,7 +238,7 @@ class _StaffInterfaceState extends State<StaffInterface> {
     );
   }
 
-  // --- REUSABLE ACTION CARD DESIGN ---
+  // --- REUSABLE ACTION CARD DESIGN (Unchanged) ---
   Widget _buildActionCard({
     required String title,
     required String subtitle,
@@ -165,8 +285,10 @@ class _StaffInterfaceState extends State<StaffInterface> {
     );
   }
 
-  // --- EMERGENCY BANNER ---
-  Widget _buildEmergencyBanner(PatientDataService patientData) {
+  // 🛑 Multi-Patient Emergency Banner
+  Widget _buildMultiPatientEmergencyBanner() {
+    if (_activeEmergencyId == null) return const SizedBox.shrink();
+
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
       padding: const EdgeInsets.all(16),
@@ -178,16 +300,14 @@ class _StaffInterfaceState extends State<StaffInterface> {
         children: [
           const Icon(Icons.bolt_rounded, color: Colors.white, size: 30),
           const SizedBox(width: 15),
-          const Expanded(
-            child: Text("EMERGENCY ALERT ACTIVE",
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          Expanded(
+            child: Text("EMERGENCY: Patient $_activeEmergencyId",
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
           TextButton(
             onPressed: () {
-              patientData.setEmergency(false);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Emergency alert resolved.')),
-              );
+              // Action when the RESOLVE button on the banner is pressed
+              _acknowledgeAlert(context, _activeEmergencyId!);
             },
             style: TextButton.styleFrom(backgroundColor: Colors.white),
             child: const Text("RESOLVE", style: TextStyle(color: Colors.red)),
@@ -197,7 +317,7 @@ class _StaffInterfaceState extends State<StaffInterface> {
     );
   }
 
-  // --- ROBOT STATUS FOOTER ---
+  // --- ROBOT STATUS FOOTER (Unchanged) ---
   Widget _buildRobotStatusFooter(PatientDataService data) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -212,6 +332,7 @@ class _StaffInterfaceState extends State<StaffInterface> {
             children: [
               const Icon(Icons.sensors_rounded, color: Colors.greenAccent),
               const SizedBox(width: 10),
+              // NOTE: This status reflects the PatientDataService instance associated with this staff's primary patient.
               Text("Robot: ${data.robotStatus ?? 'Idle'}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ],
           ),
@@ -221,9 +342,8 @@ class _StaffInterfaceState extends State<StaffInterface> {
     );
   }
 
-  // --- RINGING OVERLAY (Shows when firebaseCallService.status is 'ringing') ---
+  // --- RINGING OVERLAY (Unchanged) ---
   Widget _buildRingingOverlay(BuildContext context, FirebaseCallService callService) {
-    // This is the core logic that makes the popup appear
     if (callService.status != CallStatus.ringing) {
       return const SizedBox.shrink();
     }
@@ -232,7 +352,7 @@ class _StaffInterfaceState extends State<StaffInterface> {
 
     return Positioned.fill(
       child: Container(
-        color: Colors.black54, // Dark transparent background
+        color: Colors.black54,
         child: Center(
           child: Card(
             margin: const EdgeInsets.all(30),
@@ -282,7 +402,8 @@ class _StaffInterfaceState extends State<StaffInterface> {
   Widget build(BuildContext context) {
     // Watch providers for real-time updates
     final patientData = context.watch<PatientDataService>();
-    final firebaseCallService = context.watch<FirebaseCallService>(); // Watch for ringing status
+    final firebaseCallService = context.watch<FirebaseCallService>();
+    final userProvider = context.watch<UserProvider>();
 
     return Scaffold(
       backgroundColor: bgGrey,
@@ -300,16 +421,28 @@ class _StaffInterfaceState extends State<StaffInterface> {
               label: Text(firebaseCallService.status == CallStatus.ringing ? '1' : '0'),
               child: Icon(Icons.notifications_none_rounded, color: primaryNavy),
             ),
-            onPressed: () => print("Notifications opened"),
+            // If there's an emergency, prioritize showing the alert dialog on press
+            onPressed: () {
+              if (_activeEmergencyId != null) {
+                // If the staff taps the notification icon and an emergency is active, show the dialog again
+                _showAlert(context, _activeEmergencyId!);
+              } else {
+                print("Notifications opened");
+              }
+            },
           ),
           //--- ACCOUNT ICON BUTTON ---
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: GestureDetector(
               onTap: () {
-                // Assuming AccountMenu.show is available via the account.dart import
-                // AccountMenu.show(context);
-                print("Showing Account Menu");
+                // 🛑 INTEGRATING AccountMenu.show with dynamic data
+                AccountMenu.show(
+                  context,
+                  email: userProvider.userEmail ?? 'N/A',
+                  userId: userProvider.userCustomId ?? FALLBACK_STAFF_ID,
+                  role: userProvider.userRole ?? 'Staff', // Use a default role if null
+                );
               },
               child: CircleAvatar(
                 backgroundColor: primaryNavy.withOpacity(0.1),
@@ -327,18 +460,22 @@ class _StaffInterfaceState extends State<StaffInterface> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (patientData.emergencyPending) _buildEmergencyBanner(patientData),
+                // 🛑 Display Multi-Patient Emergency Banner
+                _buildMultiPatientEmergencyBanner(),
 
-                // --- PATIENT SELECTOR / DETAILS BUTTON ---
+                // ------------------------------------------------------------------
+                // 🛑 PATIENT DETAILS BUTTON
+                // ------------------------------------------------------------------
                 _buildActionCard(
-                  title: "Patient Details (Room 402)",
+                  title: "Patient Details",
                   subtitle: "Vitals, meds, and history",
                   icon: Icons.badge_outlined,
                   color: primaryNavy,
                   onTap: () {
+                    // Navigate to the PatientDetailsPage
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => PatientDetailsPage()),
+                      MaterialPageRoute(builder: (context) => const PatientDetailsPage()),
                     );
                   },
                 ),
@@ -367,36 +504,6 @@ class _StaffInterfaceState extends State<StaffInterface> {
 
                 const SizedBox(height: 30),
 
-                // --- VITALS SNAPSHOT SECTION ---
-                const Text('Current Vitals Snapshot', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const Divider(),
-                Wrap(
-                  spacing: 16,
-                  runSpacing: 16,
-                  children: [
-                    VitalsCard(
-                      title: 'Heart Rate',
-                      value: '${patientData.heartRate} BPM',
-                      icon: Icons.favorite,
-                      color: redAlert,
-                    ),
-                    VitalsCard(
-                      title: 'Temperature',
-                      value: '${patientData.temperature}°F',
-                      icon: Icons.thermostat,
-                      color: Colors.orange,
-                    ),
-                    VitalsCard(
-                      title: 'Oxygen Sat.',
-                      value: '${patientData.oxygenSat}%',
-                      icon: Icons.opacity,
-                      color: accentBlue,
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 30),
-
                 // --- ROBOT STATUS SECTION ---
                 _buildRobotStatusFooter(patientData),
                 const SizedBox(height: 20),
@@ -414,7 +521,7 @@ class _StaffInterfaceState extends State<StaffInterface> {
   }
 }
 
-// Reusable Vitals Card Widget
+// Reusable Vitals Card Widget (Kept for completeness)
 class VitalsCard extends StatelessWidget {
   final String title;
   final String value;

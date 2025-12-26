@@ -3,12 +3,33 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart'; // Used for @required/debugPrint
+import 'package:shared_preferences/shared_preferences.dart'; // 🛑 NEW IMPORT FOR PERSISTENCE 🛑
 
 /// A service class to handle all Firebase Authentication and
 /// Firestore user profile management.
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  // --- PERSISTENCE HELPERS ---
+
+  /// Saves the user's login state and role to SharedPreferences.
+  Future<void> _saveLoginState(String userType, String uid) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isLoggedIn', true);
+    await prefs.setString('userType', userType);
+    await prefs.setString('lastUid', uid); // Save the UID for profile lookup
+    debugPrint('Persistence: Login state saved (isLoggedIn=true, userType=$userType)');
+  }
+
+  /// Clears the user's login state from SharedPreferences.
+  Future<void> _clearLoginState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isLoggedIn', false);
+    await prefs.remove('userType');
+    await prefs.remove('lastUid');
+    debugPrint('Persistence: Login state cleared.');
+  }
 
   // --- PASSWORD VALIDATION HELPER (Must be STATIC) ---
 
@@ -39,7 +60,6 @@ class AuthService {
   // --- HELPER: ROLE & CHANNEL DETERMINATION ---
 
   /// Determines the user's role and their default channel ID based on the custom ID prefix.
-  // ... (Your existing _determineRoleAndChannel method is here)
   Map<String, String> _determineRoleAndChannel(String customId) {
     final upperId = customId.toUpperCase();
     String role;
@@ -111,6 +131,10 @@ class AuthService {
           'customId': customId,
           'createdAt': FieldValue.serverTimestamp(),
         });
+
+        // 🛑 NEW: Save login state after successful sign-up and profile creation
+        await _saveLoginState(role, user.uid);
+
         return user;
       }
       return null;
@@ -125,7 +149,6 @@ class AuthService {
   }
 
   /// Signs in an existing user using only email and password.
-  // ... (Your existing signIn method)
   Future<User?> signIn({
     required String email,
     required String password,
@@ -136,10 +159,16 @@ class AuthService {
         password: password,
       );
 
-      // Update online status in Firestore upon successful login
       final uid = userCredential.user?.uid;
       if (uid != null) {
+        // 1. Update online status in Firestore upon successful login
+        final userDoc = await _firestore.collection('users').doc(uid).get();
+        final userRole = userDoc.data()?['role'] as String? ?? 'unknown';
+
         await _firestore.collection('users').doc(uid).update({'isOnline': true});
+
+        // 🛑 NEW: Save login state after successful sign-in
+        await _saveLoginState(userRole, uid);
       }
 
       return userCredential.user;
@@ -150,9 +179,8 @@ class AuthService {
   }
 
   /// Signs out the current user and updates their online status in Firestore.
-  // ... (Your existing signOut method)
   Future<void> signOut() async {
-    // Update Firestore to set isOnline: false BEFORE signing out of Auth
+    // 1. Update Firestore to set isOnline: false BEFORE signing out of Auth
     final uid = _auth.currentUser?.uid;
     if (uid != null) {
       try {
@@ -162,11 +190,15 @@ class AuthService {
         // Continue to sign out even if update fails
       }
     }
+
+    // 2. Sign out of Firebase Auth
     await _auth.signOut();
+
+    // 🛑 NEW: Clear login state from SharedPreferences
+    await _clearLoginState();
   }
 
   /// Gets the full user profile data from Firestore for the currently logged-in user.
-  // ... (Your existing getCurrentUserProfile method)
   Future<Map<String, dynamic>?> getCurrentUserProfile() async {
     final uid = _auth.currentUser?.uid;
     if (uid == null) return null;
@@ -176,6 +208,5 @@ class AuthService {
   }
 
   /// Stream of the current Firebase User, useful for handling auth state changes (login/logout).
-  // ... (Your existing authStateChanges stream)
   Stream<User?> get authStateChanges => _auth.authStateChanges();
 }

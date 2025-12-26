@@ -107,7 +107,7 @@ class _LoginPageState extends State<LoginPage> {
 
                 // 2. Title
                 Text(
-                  "Hospital Portal",
+                  "PAR",
                   style: TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.bold,

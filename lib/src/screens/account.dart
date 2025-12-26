@@ -1,9 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart';
+import 'package:provider/provider.dart';
+import '../providers/user_provider.dart';
 
 class AccountMenu {
-  static void show(BuildContext context, {required String email, required String userId}) {
+  static void show(
+      BuildContext context, {
+        required String email,
+        required String userId,
+        // 🛑 NEW: Accept the user's role
+        required String role,
+      }) {
     // Colors matching your Staff Hub
     final Color primaryNavy = const Color(0xFF0D47A1);
+
+    // Capitalize the first letter of the role for display (e.g., 'staff' -> 'Staff')
+    final String capitalizedRole = role.isEmpty ? 'User' : role[0].toUpperCase() + role.substring(1).toLowerCase();
 
     showModalBottomSheet(
       context: context,
@@ -40,8 +52,9 @@ class AccountMenu {
             ),
             const SizedBox(height: 15),
 
+            // 🛑 DYNAMIC TEXT: Show {Role} Profile
             Text(
-              "Staff Profile",
+              "$capitalizedRole Profile",
               style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
@@ -53,7 +66,8 @@ class AccountMenu {
             // --- USER DETAILS SECTION ---
             _buildInfoTile(Icons.alternate_email_rounded, "Email Address", email),
             const Divider(height: 1),
-            _buildInfoTile(Icons.badge_outlined, "Staff ID Number", userId),
+            // 🛑 DYNAMIC TEXT: Show {Role} ID Number
+            _buildInfoTile(Icons.badge_outlined, "$capitalizedRole ID Number", userId),
 
             const SizedBox(height: 40),
 
@@ -63,7 +77,15 @@ class AccountMenu {
               height: 55,
               child: ElevatedButton.icon(
                 onPressed: () {
-                  // Navigate to Login and remove all previous routes
+                  // Access the UserProvider to perform the actual logout logic
+                  final userProvider = context.read<UserProvider>();
+
+                  // 1. Execute the logout function (e.g., clear tokens, sign out Firebase auth)
+                  // NOTE: Assuming UserProvider has a synchronous logout function.
+                  userProvider.logout();
+
+                  // 2. Navigate to Login and remove all previous routes
+                  // NOTE: Ensure '/login' route is defined in your MaterialApp
                   Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
                 },
                 icon: const Icon(Icons.logout_rounded, color: Colors.white),

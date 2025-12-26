@@ -5,14 +5,17 @@ import 'package:firebase_database/firebase_database.dart';
 
 class PatientDataService extends ChangeNotifier {
 
-  // 🛑 FIX: Private field to store the initialization path
+  // 🛑 Private field to store the initialization path
   final String _channelId;
 
   // Reference to the patient's root node in Firebase RTDB
   late final DatabaseReference _dbRef;
 
-  // Storage for the subscription to keep the stream active and allow unsubscribing.
-  DatabaseReference? _activeRef; // Note: This field is unused without proper stream disposal logic.
+  // 🛑 Central RTDB path for robot commands (The robot listens here)
+  static const String _robotCmdPath = 'cmd';
+
+  // 🛑 NEW: Global Reference to the patient root, needed for staff monitoring
+  static const String _patientRootPath = 'patients';
 
   // -------------------------
   // 1. DATA PROPERTIES (Synchronized from Firebase)
@@ -46,14 +49,13 @@ class PatientDataService extends ChangeNotifier {
   String? get robotStatus => _robotStatus;
   String? get callStatus => _callStatus;
 
-  // 🛑 FIX: Public getter to expose the channel ID for external checking (e.g., in ProxyProvider)
+  // Public getter to expose the channel ID for external checking
   String get channelId => _channelId;
 
   // -------------------------
   // 3. CONSTRUCTOR & LISTENERS
   // -------------------------
 
-  // 🛑 CONSTRUCTOR: Takes the dynamic channelId and initializes the field
   PatientDataService({required String channelId}) : _channelId = channelId {
     // Initialize the dynamic reference
     _dbRef = FirebaseDatabase.instance.ref(_channelId);
@@ -62,7 +64,6 @@ class PatientDataService extends ChangeNotifier {
   }
 
   void _listenToDatabase() {
-    _activeRef = _dbRef; // Store the reference
 
     // Listen to the main node for changes (vitals, state, robot status)
     _dbRef.onValue.listen((event) {
@@ -100,32 +101,100 @@ class PatientDataService extends ChangeNotifier {
     });
   }
 
+  // 🛑 NEW: Staff Monitoring Method
+  /// Returns a stream to monitor the entire 'patient' root node.
+  Stream<DatabaseEvent> watchAllPatientStates() {
+    return FirebaseDatabase.instance.ref(_patientRootPath).onValue;
+  }
+
   // -------------------------
   // 4. MUTATORS / COMMANDS (Write to Firebase)
   // -------------------------
+
+  // 🛑 UPDATED: Initializes a specific command structure for testing/setup
+  Future<void> initializeRobotCommandsForTesting() async {
+    final Map<String, dynamic> payload = {
+      'cmd': 'start',
+      'w': 'forward',
+      'a': 'left',
+      's': 'backward',
+      'timestamp': ServerValue.timestamp,
+    };
+
+    try {
+      // Write to the simplified root endpoint 'cmd'
+      await FirebaseDatabase.instance.ref(_robotCmdPath).set(payload);
+      debugPrint('Robot Command INITIALIZED: Sent specific cmd list (start, w, a, s) to $_robotCmdPath');
+    } catch (e) {
+      debugPrint('ERROR initializing robot commands: $e');
+    }
+  }
+
 
   // --- A. PATIENT & ROBOT COMMANDS ---
 
   /// Triggered by the Patient Dashboard or Robot Interface.
   /// Notifies staff immediately.
   Future<void> setEmergency(bool isPending) async {
-    // Note: This method no longer takes 'channelId' as it uses the instance's '_dbRef'.
     await _dbRef.child('state').update({
       'emergency': isPending,
-      'lastEmergencyTime': isPending ? ServerValue.timestamp : null, // Use ServerValue for accurate time
+      'lastEmergencyTime': isPending ? ServerValue.timestamp : null,
     });
     debugPrint('Command: Set emergency to $isPending for ${_dbRef.path}');
   }
 
   /// Triggered by the Patient Dashboard (Call Robot button).
-  Future<void> requestRobot() async {
-    final String roomID = _dbRef.key ?? 'UNKNOWN_ROOM';
-    await _dbRef.child('robot').update({
-      'command': 'DISPATCH_TO_$roomID',
-      'lastRequestTime': ServerValue.timestamp, // Use ServerValue for accurate time
-    });
-    debugPrint('Command: Requested robot for room $roomID');
+  /// Sends room-specific character command to the central command node.
+  Future<void> requestRobot(String roomNumber) async {
+    // 1. Normalize the room identifier (e.g., '401' -> 'room_401')
+    final String channelId = 'room_${roomNumber.toLowerCase().replaceAll(' ', '')}';
+
+    // 2. Determine the command based on the channel/room ID
+    String robotCommand;
+    String statusUpdate;
+    switch (channelId) {
+      case 'room_401':
+        robotCommand = 'w'; // Example: Forward command
+        statusUpdate = 'Dispatching to Room 401 (w)';
+        break;
+      case 'room_402':
+        robotCommand = 'a'; // Example: Left command
+        statusUpdate = 'Dispatching to Room 402 (a)';
+        break;
+      case 'room_403':
+        robotCommand = 's'; // Example: Backward/Stop command
+        statusUpdate = 'Dispatching to Room 403 (s)';
+        break;
+      default:
+        debugPrint('Warning: No specific command map for room: $channelId. Sending default stop.');
+        robotCommand = 'x'; // Default or stop command
+        statusUpdate = 'Dispatching to $roomNumber (default)';
+    }
+
+    // 3. Construct the payload for the CENTRAL Firebase command node
+    final Map<String, dynamic> payload = {
+      // The robot client expects the actual command here, which is 'w', 'a', or 's'
+      'data': robotCommand,
+      'target_room': channelId,
+      'timestamp': ServerValue.timestamp,
+    };
+
+    try {
+      // 4. Send the command to the *central* endpoint 'cmd'
+      await FirebaseDatabase.instance.ref(_robotCmdPath).set(payload);
+      debugPrint('Robot Command SENT: Room $channelId, Command $robotCommand');
+
+      // 5. Update the *patient's local* node to reflect the dispatch status in the UI
+      await _dbRef.child('robot').update({
+        'status': statusUpdate,
+        'lastRequestTime': ServerValue.timestamp,
+      });
+
+    } catch (e) {
+      debugPrint('ERROR sending robot command: $e');
+    }
   }
+
 
   /// Triggered by the Patient or Robot when initiating a video call.
   Future<void> setCallStatus(String status) async {
@@ -136,7 +205,17 @@ class PatientDataService extends ChangeNotifier {
 
   // --- B. STAFF COMMANDS ---
 
+  /// Triggered by the Staff Interface to resolve an emergency for a specific patient.
+  // 🛑 NEW/MODIFIED: This resolves the emergency flag using a specific patient ID.
+  Future<void> clearEmergency(String customId) async {
+    final targetRef = FirebaseDatabase.instance.ref('$_patientRootPath/$customId/state');
+    await targetRef.update({'emergency': false});
+    debugPrint('Command: Resolved emergency for patient $customId');
+  }
+
   /// Triggered by the Staff Interface to resolve an emergency.
+  // NOTE: The original resolveEmergency() below seems redundant if clearEmergency is used
+  // but I am keeping it as it targets the instance's own patient channel (_dbRef).
   Future<void> resolveEmergency() async {
     await _dbRef.child('state').update({'emergency': false});
     debugPrint('Command: Resolved emergency for ${_dbRef.path}');

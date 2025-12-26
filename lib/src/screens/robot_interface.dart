@@ -2,13 +2,13 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
+import 'room_confirm.dart';
 // REQUIRED IMPORTS
 import '../providers/user_provider.dart';
 import '../services/communication_service.dart';
-// 🛑 NEW IMPORT: Import the Firebase Signaling Service
 import '../services/firebase_call_service.dart';
 import 'video_call_screen.dart'; // <--- ASSUMED PATH TO THE VIDEO CALL SCREEN
+import '../services/patient_data_service.dart'; // Required for emergency trigger
 
 class RobotInterface extends StatelessWidget {
   const RobotInterface({
@@ -23,7 +23,6 @@ class RobotInterface extends StatelessWidget {
   final Color staffGreen = const Color(0xFF4CAF50);
 
   // 🛑 CRITICAL FIX: Define the COMMON STAFF ID
-  // This must match the constant used in staff_interface.dart
   static const String COMMON_STAFF_LISTEN_ID = 'staff_group_station';
 
   // --- POPUP MESSAGE ---
@@ -107,8 +106,9 @@ class RobotInterface extends StatelessWidget {
   Widget build(BuildContext context) {
     final userProvider = context.watch<UserProvider>();
     final commService = context.read<CommunicationService>();
-    // 🛑 NEW: Read the Firebase Signaling Service
     final firebaseCallService = context.read<FirebaseCallService>();
+    // 🛑 FIX: Read the PatientDataService instance 🛑
+    final patientDataService = context.read<PatientDataService>();
 
     // Get the required data from the provider
     final patientId = userProvider.userCustomId ?? 'robot_default';
@@ -191,7 +191,7 @@ class RobotInterface extends StatelessWidget {
                     topColor: const Color(0xFF66BB6A),
                     bottomColor: const Color(0xFF43A047),
                     // 🛑 ACTION: Use the new signaling logic
-                    onTap: () => startVideoCall('staff_channel'),
+                    onTap: () => startVideoCall('staff_channell'),
                   ),
 
                   const SizedBox(height: 20),
@@ -204,8 +204,12 @@ class RobotInterface extends StatelessWidget {
                     icon: Icons.rocket_launch_rounded,
                     topColor: const Color(0xFF42A5F5),
                     bottomColor: const Color(0xFF1E88E5),
-                    // ACTION: Placeholder for a robot dispatch/movement function
-                    onTap: () => _showConfirmation(context, "Robot Dispatched"),
+                    // ACTION: Navigate to RoomSelectionPage (Fixed syntax)
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => RoomSelectionPage(),
+                      ),
+                    ),
                   ),
 
                   const SizedBox(height: 20),
@@ -215,8 +219,15 @@ class RobotInterface extends StatelessWidget {
                     width: double.infinity,
                     height: 120,
                     child: ElevatedButton(
-                      // 🛑 ACTION: Use the new signaling logic
-                      onPressed: () => startVideoCall('emergency_channel'),
+                      onPressed: () {
+                        // 🛑 FIX APPLIED: Use local variable patientDataService
+                        patientDataService.setEmergency(true);
+
+                        // Also initiate a call for the emergency
+                        startVideoCall('emergency_channel');
+
+                        _showConfirmation(context, "Staff Alerted");
+                      },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: emergencyRed,
                         foregroundColor: Colors.white,
