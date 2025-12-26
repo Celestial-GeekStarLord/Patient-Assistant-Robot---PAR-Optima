@@ -27,8 +27,11 @@ class PatientDataService extends ChangeNotifier {
   String _oxygenSat = "99";
 
   // Patient State (Shared)
-  String _nextMedsTime = "N/A";
   bool _emergencyPending = false; // Triggered by Patient/Robot
+
+  // 🛑 NEW: Medication fields for calculation
+  Map<String, dynamic>? _medicationData;
+  DateTime? _nextMedicationTime; // The calculated earliest time
 
   // Robot Status (Reported by Robot Interface)
   String? _robotStatus = "Idle"; // e.g., "Idle", "Dispatching to Room 402"
@@ -44,10 +47,12 @@ class PatientDataService extends ChangeNotifier {
   String get heartRate => _heartRate;
   String get temperature => _temperature;
   String get oxygenSat => _oxygenSat;
-  String get nextMedsTime => _nextMedsTime;
   bool get emergencyPending => _emergencyPending;
   String? get robotStatus => _robotStatus;
   String? get callStatus => _callStatus;
+
+  // 🛑 NEW GETTER: Calculated next medication time
+  DateTime? get nextMedicationTime => _nextMedicationTime;
 
   // Public getter to expose the channel ID for external checking
   String get channelId => _channelId;
@@ -65,7 +70,7 @@ class PatientDataService extends ChangeNotifier {
 
   void _listenToDatabase() {
 
-    // Listen to the main node for changes (vitals, state, robot status)
+    // Listen to the main node for changes (vitals, state, robot status, medication)
     _dbRef.onValue.listen((event) {
       final data = event.snapshot.value as Map<dynamic, dynamic>?;
       if (data != null) {
@@ -74,6 +79,7 @@ class PatientDataService extends ChangeNotifier {
         // Parse Vitals
         final vitals = data['vitals'] as Map<dynamic, dynamic>?;
         if (vitals != null) {
+          // Note: Assuming RTDB stores these keys as 'hr', 'temp', 'o2'
           _heartRate = vitals['hr']?.toString() ?? _heartRate;
           _temperature = vitals['temp']?.toString() ?? _temperature;
           _oxygenSat = vitals['o2']?.toString() ?? _oxygenSat;
@@ -82,9 +88,13 @@ class PatientDataService extends ChangeNotifier {
         // Parse Shared State
         final state = data['state'] as Map<dynamic, dynamic>?;
         if (state != null) {
-          _nextMedsTime = state['nextMeds']?.toString() ?? _nextMedsTime;
           _emergencyPending = state['emergency'] as bool? ?? _emergencyPending;
         }
+
+        // 🛑 NEW: Parse Medication Data and trigger calculation
+        // Ensure keys are correctly cast as String
+        _medicationData = data['medication']?.cast<String, dynamic>() as Map<String, dynamic>?;
+        _calculateNextMedicationTime();
 
         // Parse Robot Status
         final robot = data['robot'] as Map<dynamic, dynamic>?;
@@ -100,6 +110,62 @@ class PatientDataService extends ChangeNotifier {
       debugPrint('RTDB Listener Error: $error');
     });
   }
+
+  // 🛑 NEW METHOD: Logic to calculate the earliest next dose (FINAL FIX)
+  void _calculateNextMedicationTime() {
+    if (_medicationData == null || _medicationData!.isEmpty) {
+      _nextMedicationTime = null;
+      debugPrint('Medication data is empty or null.');
+      return;
+    }
+
+    DateTime? earliestNextTime;
+    final now = DateTime.now();
+
+    // Iterate over each medication
+    _medicationData!.forEach((key, value) {
+      // Ensure values are correct types and not null
+      final frequency = value['frequency_hours'] as int?;
+      final lastAdministeredMillis = value['last_administered'] as int?;
+
+      if (frequency != null && lastAdministeredMillis != null) {
+        final lastAdministered = DateTime.fromMillisecondsSinceEpoch(lastAdministeredMillis);
+
+        // Calculate the scheduled next time (last administered + frequency)
+        DateTime nextScheduledTime = lastAdministered.add(Duration(hours: frequency));
+
+        // 🛑 FINAL FIX: Use a local variable to hold the existing time if it exists.
+        final currentEarliest = earliestNextTime;
+
+        if (currentEarliest == null || nextScheduledTime.isBefore(currentEarliest)) {
+          earliestNextTime = nextScheduledTime;
+        }
+      }
+    });
+
+    _nextMedicationTime = earliestNextTime;
+
+    // 🛑 LOGGING: Calculate and show remaining time in minutes
+    // Use the null-aware access operator (?.) and if-case for clarity
+    if (earliestNextTime case final time?) {
+      // time is now guaranteed non-nullable DateTime
+      final difference = time.difference(now);
+      final totalMinutes = difference.inMinutes;
+      final isOverdue = totalMinutes.isNegative;
+
+      String logMessage;
+
+      if (isOverdue) {
+        logMessage = 'Medication is OVERDUE by ${totalMinutes.abs()} minutes.';
+      } else {
+        logMessage = 'Next critical medication time is in $totalMinutes minutes.';
+      }
+
+      // The 'toLocal()' call is now safe.
+      debugPrint('Calculated next critical medication: $logMessage (Time: ${time.toLocal()})');
+    }
+  }
+
 
   // 🛑 NEW: Staff Monitoring Method
   /// Returns a stream to monitor the entire 'patient' root node.
@@ -206,7 +272,6 @@ class PatientDataService extends ChangeNotifier {
   // --- B. STAFF COMMANDS ---
 
   /// Triggered by the Staff Interface to resolve an emergency for a specific patient.
-  // 🛑 NEW/MODIFIED: This resolves the emergency flag using a specific patient ID.
   Future<void> clearEmergency(String customId) async {
     final targetRef = FirebaseDatabase.instance.ref('$_patientRootPath/$customId/state');
     await targetRef.update({'emergency': false});
@@ -214,17 +279,20 @@ class PatientDataService extends ChangeNotifier {
   }
 
   /// Triggered by the Staff Interface to resolve an emergency.
-  // NOTE: The original resolveEmergency() below seems redundant if clearEmergency is used
-  // but I am keeping it as it targets the instance's own patient channel (_dbRef).
   Future<void> resolveEmergency() async {
     await _dbRef.child('state').update({'emergency': false});
     debugPrint('Command: Resolved emergency for ${_dbRef.path}');
   }
 
   /// Triggered by the Staff Interface to update the next medication time.
-  Future<void> setNextMedication(String time) async {
-    await _dbRef.child('state').update({'nextMeds': time});
-    debugPrint('Command: Set next medication time to $time');
+  /// 🛑 MODIFIED: This now updates the medication schedule by setting a 'last_administered' time,
+  /// which automatically triggers the calculation in the listener.
+  Future<void> administerMedication(String medicationKey) async {
+    // We assume the medicationKey is the key in the 'medication' map (e.g., 'med1_paracetamol')
+    await _dbRef.child('medication').child(medicationKey).update({
+      'last_administered': ServerValue.timestamp,
+    });
+    debugPrint('Command: Administered medication $medicationKey at ${DateTime.now().toLocal()}');
   }
 
   // --- C. ROBOT INTERFACE COMMANDS ---

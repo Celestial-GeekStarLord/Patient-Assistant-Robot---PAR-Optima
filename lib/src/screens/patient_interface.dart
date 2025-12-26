@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+// Note: Adding intl here is technically unnecessary if only DateFormat is used in ReportPage,
+// but for displaying formatted time here, you need it.
+import 'package:intl/intl.dart';
 
 // --- UPDATED IMPORTS ---
 import '../services/patient_data_service.dart';
@@ -32,6 +35,20 @@ class PatientDashboard extends StatelessWidget {
     final String currentRoomNumber = userProvider.roomNumber; // Use this for display only
     final String currentEmail = userProvider.userEmail ?? "N/A";
     final String currentCustomId = userProvider.userCustomId ?? "N/A";
+
+    // 🛑 FIX: Safely retrieve and format the next medication time 🛑
+    final DateTime? nextMedicationTime = patientDataService.nextMedicationTime;
+    final String nextMedsDisplay = nextMedicationTime == null
+        ? "Not Scheduled"
+        : (nextMedicationTime.isBefore(DateTime.now())
+        ? "OVERDUE"
+        : DateFormat('h:mm a, MMM d').format(nextMedicationTime));
+
+    // Determine the text color based on the status
+    final Color medsTextColor = nextMedicationTime != null && nextMedicationTime.isBefore(DateTime.now())
+        ? emergencyRed // Use red for overdue
+        : Colors.white; // Default color
+
 
     return Scaffold(
       backgroundColor: offWhite,
@@ -99,7 +116,7 @@ class PatientDashboard extends StatelessWidget {
                 ),
               ),
 
-              // --- 2. NEXT MEDICATION BUTTON ---
+              // --- 2. NEXT MEDICATION BUTTON (FIXED) ---
               SizedBox(
                 width: double.infinity,
                 height: 90,
@@ -128,11 +145,11 @@ class PatientDashboard extends StatelessWidget {
                             "Next Medication",
                             style: TextStyle(color: Colors.white, fontSize: 14),
                           ),
-                          // 🛑 DYNAMIC: Next Meds Time from PatientDataService
+                          // 🛑 DYNAMIC: Use the correctly formatted and null-checked string 🛑
                           Text(
-                            patientDataService.nextMedsTime,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            nextMedsDisplay,
+                            style: TextStyle(
+                              color: medsTextColor, // Use dynamic color
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                             ),

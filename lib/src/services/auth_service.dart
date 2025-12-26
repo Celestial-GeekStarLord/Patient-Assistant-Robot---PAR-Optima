@@ -111,6 +111,10 @@ class AuthService {
       final role = roleData['role']!;
       final channelId = roleData['channelId']!;
 
+      if (role != 'patient' && role != 'staff' && role != 'robot') {
+        throw ArgumentError('Custom ID prefix is invalid for registration.');
+      }
+
       // 2. Create User in Firebase Authentication
       final userCredential = await _auth.createUserWithEmailAndPassword(
         email: email,
@@ -119,9 +123,11 @@ class AuthService {
       final user = userCredential.user;
 
       if (user != null) {
-        // 3. Create User Profile in Firestore
-        await _firestore.collection('users').doc(user.uid).set({
-          'uid': user.uid,
+        final uid = user.uid;
+
+        // 3. Create User Profile in the /users collection
+        await _firestore.collection('users').doc(uid).set({
+          'uid': uid,
           'email': email,
           'name': name,
           'role': role,
@@ -132,8 +138,43 @@ class AuthService {
           'createdAt': FieldValue.serverTimestamp(),
         });
 
-        // 🛑 NEW: Save login state after successful sign-up and profile creation
-        await _saveLoginState(role, user.uid);
+        // 🛑 NEW STEP 4: Initialize Patient/Robot Data in the /patients collection
+        if (role == 'patient' || role == 'robot') {
+
+          final initialPatientData = {
+            // Default Vitals/State
+            'state': {
+              'emergency': false,
+              'statusMessage': 'Stable',
+              'roomTemperature': 0.0, // Default to 0, will be updated by listeners
+            },
+            'vitals': {
+              'heartRate': 0, // Will be updated by listeners
+              'spo2': 0,
+              'bpSystolic': 0,
+              'bpDiastolic': 0,
+              'lastUpdated': FieldValue.serverTimestamp(),
+            },
+            // Initial Medication Schedule (required for PatientDataService to prevent errors)
+            'medication': {},
+            // Other details the PatientDashboard might need initially
+            'other_details': {
+              'admission_date': FieldValue.serverTimestamp(),
+              'assigned_staff': null,
+              'notes': 'New registration: $name ($customId).',
+            }
+          };
+
+          await _firestore.collection('patients').doc(customId).set(
+              initialPatientData,
+              // Use SetOptions(merge: false) to ensure a clean overwrite if the customId was used before
+              SetOptions(merge: false)
+          );
+          debugPrint('✅ Initial patient/robot data created at /patients/$customId');
+        }
+
+        // 5. Save persistent login state
+        await _saveLoginState(role, uid);
 
         return user;
       }

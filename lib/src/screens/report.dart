@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+// 🛑 FIX: ADD THE INT'L IMPORT HERE 🛑
+import 'package:intl/intl.dart';
 
 // Import the service that holds the real-time data
 import '../services/patient_data_service.dart';
@@ -13,8 +15,8 @@ class ReportPage extends StatelessWidget {
   const ReportPage({
     super.key,
     required this.patientChannelId,
-    required this.patientName,
-  });
+    required String patientName, // Make sure this is correctly named
+  }) : patientName = patientName; // Assign patientName to the final field
 
   @override
   Widget build(BuildContext context) {
@@ -102,11 +104,28 @@ class ReportPage extends StatelessWidget {
     );
   }
 
-  // ... (Your other methods remain the same)
-
-  // ... (The rest of the ReportPage class code remains the same)
-
   Widget _buildVitalsGrid(PatientDataService service, Color green, Color orange) {
+
+    // 🛑 FIX: Get the new calculated DateTime? 🛑
+    final nextMedicationTime = service.nextMedicationTime;
+
+    // 🛑 FIX: Format the DateTime? into a display string 🛑
+    final nextMedicationDisplay = nextMedicationTime == null
+        ? "N/A"
+        : (nextMedicationTime.isBefore(DateTime.now())
+        ? "OVERDUE (${DateFormat('h:mm a').format(nextMedicationTime)})" // Example formatting for overdue
+        : DateFormat('h:mm a, MMM d').format(nextMedicationTime)
+    );
+
+    final Color medicationColor = nextMedicationTime != null && nextMedicationTime.isBefore(DateTime.now())
+        ? Colors.red.shade700 // Overdue
+        : Colors.purple.shade700; // Scheduled
+
+    final String medicationUnit = nextMedicationTime != null && nextMedicationTime.isBefore(DateTime.now())
+        ? "" // No unit for overdue message
+        : "Time";
+
+
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -140,18 +159,15 @@ class ReportPage extends StatelessWidget {
         _buildVitalsTile(
           icon: Icons.access_time_filled_rounded,
           title: "Next Medication",
-          value: service.nextMedsTime,
-          unit: "",
-          color: Colors.purple.shade700,
+          // 🛑 FIX: Use the calculated and formatted display value 🛑
+          value: nextMedicationDisplay,
+          unit: medicationUnit,
+          color: medicationColor,
         ),
       ],
     );
   }
 
-// ... (Your _buildVitalsTile and other methods remain the same)
-
-// ... (Your _buildVitalsTile and other methods remain the same)
-  }
 
   Widget _buildVitalsTile({
     required IconData icon,
@@ -160,6 +176,13 @@ class ReportPage extends StatelessWidget {
     required String unit,
     required Color color,
   }) {
+    // Determine font size based on content length for the Next Medication tile
+    // This is a common pattern when a field might contain a long string (like the overdue message)
+    final valueFontSize = (title == "Next Medication" && value.length > 10) ? 24.0 : 34.0;
+
+    // For medication, change unit color to be less pronounced if it's a long message
+    final unitColor = (title == "Next Medication" && value.length > 10) ? color.withOpacity(0.7) : color;
+
     return Card(
       elevation: 5,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -192,7 +215,7 @@ class ReportPage extends StatelessWidget {
               TextSpan(
                 text: value,
                 style: TextStyle(
-                  fontSize: 34, // 🛑 FIX: Slightly reduce font size for safety 🛑
+                  fontSize: valueFontSize, // 🛑 FIX: Dynamic font size for safety 🛑
                   fontWeight: FontWeight.w900,
                   color: color,
                 ),
@@ -202,7 +225,7 @@ class ReportPage extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.normal,
-                      color: color,
+                      color: unitColor,
                     ),
                   ),
                 ],
@@ -308,3 +331,4 @@ class ReportPage extends StatelessWidget {
       ),
     );
   }
+}
